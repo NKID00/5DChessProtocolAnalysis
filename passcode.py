@@ -1,3 +1,5 @@
+from random import randint
+
 def passcode2internal(passcode: str):
     notation_map = dict(zip('PNBRQKpnbrqk', range(12)))
     result = 0
@@ -14,6 +16,9 @@ def internal2passcode(internal: int):
         internal //= 12
     return result
 
+def generate_random_passcode():
+    return internal2passcode(randint(0, 2985983))  # kkkkkk = 2985983
+
 if __name__ ==  '__main__':
     assert passcode2internal('PPPPPP') == 0x00000000
     assert passcode2internal('NNNNNN') == 0x0004245d
@@ -22,6 +27,8 @@ if __name__ ==  '__main__':
     assert internal2passcode(0x00000000) == 'PPPPPP'
     assert internal2passcode(0x0004245d) == 'NNNNNN'
     assert internal2passcode(0x002b4634) == 'PnBrQk'
+
+    print(generate_random_passcode())
 
     s = input()
     if s.startswith('0x'):
