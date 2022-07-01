@@ -1,6 +1,7 @@
 use byteorder::{ByteOrder, LittleEndian};
 use bytes::BytesMut;
 use enum_primitive::{enum_from_primitive, enum_from_primitive_impl, enum_from_primitive_impl_ty};
+use rand::Rng;
 use std::io::Result;
 use tokio_util::codec::{Decoder, Encoder};
 
@@ -466,4 +467,8 @@ pub fn try_i64_to_enum<T: num::FromPrimitive>(v: i64) -> Result<T> {
             std::any::type_name::<T>()
         ),
     }
+}
+
+pub fn generate_random_passcode_internal() -> u64 {
+    rand::thread_rng().gen_range(0..=2985983) // kkkkkk = 2985983
 }

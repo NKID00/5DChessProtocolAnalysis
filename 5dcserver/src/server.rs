@@ -9,7 +9,6 @@ use tokio_util::codec::Framed;
 use tracing::error;
 
 use crate::datatype::*;
-use crate::passcode::generate_random_passcode_internal;
 
 #[derive(Debug)]
 pub struct ServerState {

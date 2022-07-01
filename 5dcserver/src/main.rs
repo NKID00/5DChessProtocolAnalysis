@@ -6,7 +6,6 @@ use tracing_subscriber::FmtSubscriber;
 
 #[macro_use]
 pub mod datatype;
-pub mod passcode;
 pub mod server;
 
 use crate::server::handle_connection;
