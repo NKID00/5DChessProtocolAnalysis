@@ -44,17 +44,17 @@ struct C2SMatchCreateOrJoin
     int64_t passcode; /* Join = passcode, Create = -1 */
 };
 
-struct S2CMatchCreateOrJoinSuccess
+struct S2CMatchCreateOrJoinResult
 {
     uint64_t length; /* = 64 */
     int64_t type; /* = 4 */
-    int64_t unknown1; /* = 1 */
-    int64_t unknown2; /* = 0 */
+    int64_t result; /* Success = 1, Failed = 0 */
+    int64_t reason; /* unconfirmed, Success = 0, Match Not Found = 1 */
     int64_t color; /* Random = 1, White = 2, Black = 3 */
     int64_t clock; /* No Clock = 1, Short = 2, Medium = 3, Long = 4 */
     int64_t variant; /* Standard = 1, Random = 34, Turn Zero = 35, ... */
     int64_t visibility; /* Public = 1, Private = 2 */
-    int64_t passcode; /* provide even when match is public */
+    int64_t passcode; /* Success = passcode, Failed = -1, provide even when match is public */
 };
 
 struct C2SMatchCancel
@@ -64,11 +64,11 @@ struct C2SMatchCancel
     int8_t unknown; /* = 0 */
 };
 
-struct S2CMatchCancelSuccess
+struct S2CMatchCancelResult
 {
     uint64_t length; /* = 16 */
     int64_t type; /* = 6 */
-    int64_t cancelCount;
+    int64_t result; /* Success = 1, Failed = 0 */
 };
 
 struct S2CMatchStart
@@ -106,13 +106,14 @@ struct C2SOrS2CAction
 {
     uint64_t length; /* = 112 */
     int64_t type; /* = 11 */
-    int64_t actionType; /* Move = 1, Undo Move = 2, Submit Moves = 3, Header = 6 */
+    int64_t actionType; /* Move = 1, Undo Move = 2, Submit Moves = 3, Display Check Reason = 5, Header = 6 */
     int64_t color; /* White = 0, Black = 1 */
     uint64_t messageId; /* C2S = 0, S2C = probably some auto increasing identifier of the message */
-    /* following = 0 if actionType is not Move = 1 */
+    /* following = 0 if actionType is not Move = 1 or Display Check Reason = 5 */
     int64_t srcL;
     int64_t srcT;
     int64_t srcBoardColor; /* White = 0, Black = 1 */
+    /* following = 0 if actionType is not Move = 1 */
     int64_t srcY; /* starts from 0 */
     int64_t srcX; /* starts from 0 */
     int64_t dstL;
