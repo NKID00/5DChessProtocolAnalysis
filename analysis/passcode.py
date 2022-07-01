@@ -1,7 +1,7 @@
 from random import randint
 
 def passcode2internal(passcode: str):
-    notation_map = dict(zip('PNBRQKpnbrqk', range(12))) # capital for white
+    notation_map = dict(zip('PNBRQKpnbrqk', range(12)))  # capital for white
     result = 0
     for i in reversed(range(6)):
         result *= 12
