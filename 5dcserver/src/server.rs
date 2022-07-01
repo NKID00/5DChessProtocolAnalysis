@@ -1,7 +1,5 @@
-use byteorder::{ByteOrder, LittleEndian};
-use bytes::{Bytes, BytesMut};
 use futures::{SinkExt, StreamExt};
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::io::Result;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -17,7 +15,8 @@ use crate::passcode::generate_random_passcode_internal;
 pub struct ServerState {
     match_id: Mutex<u64>,
     message_id: Mutex<u64>,
-    matches: Mutex<VecDeque<Match>>,
+    matches: Mutex<VecDeque<InternalMatch>>,
+    matches_map: Mutex<HashMap<i64, InternalMatch>>,
     public_matches: Mutex<VecDeque<PublicMatch>>,
     server_history_matches: Mutex<VecDeque<ServerHistoryMatch>>,
 }
@@ -27,11 +26,10 @@ impl ServerState {
         ServerState {
             match_id: Mutex::new(0),
             message_id: Mutex::new(0),
-            matches: Mutex::new(std::collections::VecDeque::<Match>::new()),
-            public_matches: Mutex::new(std::collections::VecDeque::<PublicMatch>::new()),
-            server_history_matches: Mutex::new(
-                std::collections::VecDeque::<ServerHistoryMatch>::new(),
-            ),
+            matches: Mutex::new(VecDeque::<InternalMatch>::new()),
+            matches_map: Mutex::new(HashMap::<i64, InternalMatch>::new()),
+            public_matches: Mutex::new(VecDeque::<PublicMatch>::new()),
+            server_history_matches: Mutex::new(VecDeque::<ServerHistoryMatch>::new()),
         }
     }
 }
@@ -50,68 +48,79 @@ pub enum ConnectionState {
 
 pub async fn handle_connection(
     server_state: Arc<ServerState>,
-    mut stream: TcpStream,
+    stream: TcpStream,
     addr: SocketAddr,
 ) {
     let mut state = ConnectionState::Idle;
     let mut messages = Framed::new(stream, MessageCodec {});
-    loop {
-        match match state {
-            ConnectionState::Idle => handle_connection_idle(&server_state, &mut state, &addr, &mut messages).await,
-            ConnectionState::PublicMatchWaiting => todo!(),
-            ConnectionState::PrivateMatchWaiting => todo!(),
-            ConnectionState::Playing => todo!(),
-        } {
-            Ok(()) => {}
-            Err(e) => {
-                error!("{}", e);
-                break;
-            }
+    match handle_connection_main_loop(&server_state, &mut state, &addr, &mut messages).await {
+        Ok(()) => {}
+        Err(e) => {
+            error!("[{}:{}] {}", addr.ip(), addr.port(), e);
         }
-        match messages.flush().await {
-            Ok(()) => {}
-            Err(e) => {
-                error!("[{}:{}] {}", addr.ip(), addr.port(), e);
-                break;
-            }
-        };
     }
+    // TODO: clean resources, remove match from public_matches, etc.
+    error!("[{}:{}] Disconnected.", addr.ip(), addr.port());
 }
 
-async fn handle_connection_idle(
+pub async fn handle_connection_main_loop(
     server_state: &Arc<ServerState>,
     state: &mut ConnectionState,
     addr: &SocketAddr,
     messages: &mut Framed<TcpStream, MessageCodec>,
 ) -> Result<()> {
-    let message_option = messages.next().await;
-    match message_option {
-        Some(Ok((message_type, _message_bytes))) => match message_type {
-            MessageType::C2SGreet => {
-                let mut response_bytes = BytesMut::new();
-                response_bytes.reserve(8 * 6);
-                let mut buffer = [0; 8];
-                LittleEndian::write_i64(&mut buffer, 1);
-                response_bytes.extend(buffer); // version, unconfirmed
-                LittleEndian::write_i64(&mut buffer, 0);
-                for _ in 0..5 {
-                    // unknown zeros
-                    response_bytes.extend(buffer);
-                }
-                match messages
-                    .feed((MessageType::S2CGreet, response_bytes.into()))
-                    .await
-                {
-                    Ok(()) => {}
-                    Err(e) => {
-                        error!("[{}:{}] {}", addr.ip(), addr.port(), e);
-                        return Err(e);
+    loop {
+        match messages.next().await {
+            Some(Ok(message)) => {
+                match state {
+                    ConnectionState::Idle => {
+                        handle_message_idle(server_state, state, addr, messages, message).await?
+                    }
+                    ConnectionState::PublicMatchWaiting => {}
+                    ConnectionState::PrivateMatchWaiting => {}
+                    ConnectionState::Playing => {}
+                };
+                messages.flush().await?;
+            }
+            Some(Err(e)) => return Err(e),
+            None => return Ok(()), // disconnected
+        }
+    }
+}
+
+async fn handle_message_idle(
+    server_state: &Arc<ServerState>,
+    state: &mut ConnectionState,
+    addr: &SocketAddr,
+    messages: &mut Framed<TcpStream, MessageCodec>,
+    message: Message,
+) -> Result<()> {
+    match message {
+        Message::C2SGreet(_body) => {
+            messages.feed(Message::S2CGreet).await?;
+        }
+        Message::C2SMatchCreateOrJoin(body) => {
+            if body.passcode < 0 {
+                // join match
+                let matches_map = server_state.matches_map.lock().await;
+                match matches_map.get(&body.passcode) {
+                    Some(_) => todo!(),
+                    None => {
+                        messages
+                            .feed(Message::S2CMatchCreateOrJoinResult(S2CMatchCreateOrJoinResultBody { color: todo!(), clock: todo!(), variant: todo!(), visibility: todo!(), passcode: todo!() }))
+                            .await?
                     }
                 }
-            }
-            MessageType::C2SMatchCreateOrJoin => {
-                //messages.feed().await;
-                match Visibility::Public {
+            } else {
+                // create match
+                let internal_match = InternalMatch {
+                    color: body.color,
+                    clock: body.clock,
+                    variant: body.variant,
+                    visibility: body.visibility,
+                    passcode: body.passcode,
+                };
+                match body.visibility {
                     Visibility::Public => {
                         *state = ConnectionState::PublicMatchWaiting;
                     }
@@ -120,42 +129,18 @@ async fn handle_connection_idle(
                     }
                 }
             }
-            MessageType::C2SMatchCancel => {
-                let mut response_bytes = BytesMut::new();
-                response_bytes.reserve(8 * 1);
-                let mut buffer = [0; 8];
-                LittleEndian::write_i64(&mut buffer, 0);
-                response_bytes.extend(buffer); // cancel count
-                match messages
-                    .feed((MessageType::S2CMatchCancelSuccess, response_bytes.into()))
-                    .await
-                {
-                    Ok(()) => {}
-                    Err(e) => {
-                        error!("[{}:{}] {}", addr.ip(), addr.port(), e);
-                        return Err(e);
-                    }
-                }
-            }
-            MessageType::C2SMatchListRequest => {
-                //messages.feed().await;
-            }
-            _ => {
-                error!(
-                    "[{}:{}] Invalid message type {:?} at state Idle.",
-                    addr.ip(),
-                    addr.port(),
-                    message_type
-                );
-                return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, ""));
-            }
-        },
-
-        Some(Err(e)) => {
-            error!("[{}:{}] {}", addr.ip(), addr.port(), e);
-            return Err(e);
         }
-        None => {}
+        Message::C2SMatchCancel => {
+            messages
+                .feed(Message::S2CMatchCancelResult(S2CMatchCancelResultBody { result: 0 }))
+                .await?;
+        }
+        Message::C2SMatchListRequest => {
+            //messages.feed().await;
+        }
+        _ => {
+            return error_invalid_data!("Invalid message type {:?} at state Idle.", message);
+        }
     }
     Ok(())
 }

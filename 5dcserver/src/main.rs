@@ -4,6 +4,7 @@ use tokio::net::TcpListener;
 use tracing::{info, subscriber, Level};
 use tracing_subscriber::FmtSubscriber;
 
+#[macro_use]
 pub mod datatype;
 pub mod passcode;
 pub mod server;

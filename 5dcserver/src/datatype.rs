@@ -1,16 +1,17 @@
 use byteorder::{ByteOrder, LittleEndian};
-use bytes::{Bytes, BytesMut};
+use bytes::BytesMut;
 use enum_primitive::{enum_from_primitive, enum_from_primitive_impl, enum_from_primitive_impl_ty};
 use std::io::Result;
 use tokio_util::codec::{Decoder, Encoder};
 
 pub const MESSAGE_LENGTH_MAX: usize = 4096; // >= 1008, prevent attacks
 
+#[macro_export]
 macro_rules! error_invalid_data {
-    ( $reason:expr ) => {
+    ( $($arg:tt)* ) => {
         Err(std::io::Error::new(
             std::io::ErrorKind::InvalidData,
-            $reason,
+            format!($($arg)*),
         ))
     };
 }
@@ -78,35 +79,35 @@ enum_from_primitive! {
 }
 
 #[derive(Debug, Copy, Clone)]
-pub struct Match {
+pub struct InternalMatch {
     pub color: OptionalColorWithRandom,
     pub clock: OptionalClock,
-    pub variant: u64,
+    pub variant: i64,
     pub visibility: Visibility,
-    pub passcode: u64,
+    pub passcode: i64,
 }
 
 #[derive(Debug, Copy, Clone)]
 pub struct PublicMatch {
     pub color: OptionalColorWithRandom,
     pub clock: OptionalClock,
-    pub variant: u64,
-    pub passcode: u64,
+    pub variant: i64,
+    pub passcode: i64,
 }
 
 #[derive(Debug, Copy, Clone)]
 pub struct PrivateMatch {
     pub color: OptionalColorWithRandom,
     pub clock: OptionalClock,
-    pub variant: u64,
-    pub passcode: u64,
+    pub variant: i64,
+    pub passcode: i64,
 }
 
 #[derive(Debug, Copy, Clone)]
 pub struct ServerHistoryMatch {
     pub color: OptionalColorWithRandom,
     pub clock: OptionalClock,
-    pub variant: u64,
+    pub variant: i64,
     pub visibility: Visibility,
     pub seconds_passed: u64,
 }
@@ -118,9 +119,9 @@ enum_from_primitive! {
         C2SGreet = 1,
         S2CGreet = 2,
         C2SMatchCreateOrJoin = 3,
-        S2CMatchCreateOrJoinSuccess = 4,
+        S2CMatchCreateOrJoinResult = 4,
         C2SMatchCancel = 5,
-        S2CMatchCancelSuccess = 6,
+        S2CMatchCancelResult = 6,
         S2CMatchStart = 7,
 
         S2COpponentLeft = 9,
@@ -133,7 +134,7 @@ enum_from_primitive! {
 
 pub struct MessageCodec {}
 impl Decoder for MessageCodec {
-    type Item = (MessageType, BytesMut);
+    type Item = Message;
     type Error = std::io::Error;
 
     fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>> {
@@ -142,7 +143,7 @@ impl Decoder for MessageCodec {
         }
         let length = LittleEndian::read_u64(&src[0..7]) as usize;
         if length > MESSAGE_LENGTH_MAX {
-            return error_invalid_data!(format!("Message of length {} is too large.", length));
+            return error_invalid_data!("Message of length {} is too large.", length);
         }
         if src.len() < 8 + length {
             src.reserve(8 + length - src.len());
@@ -158,9 +159,9 @@ impl Decoder for MessageCodec {
             MessageType::C2SGreet => 56,
             MessageType::S2CGreet => 56,
             MessageType::C2SMatchCreateOrJoin => 48,
-            MessageType::S2CMatchCreateOrJoinSuccess => 64,
+            MessageType::S2CMatchCreateOrJoinResult => 64,
             MessageType::C2SMatchCancel => 9,
-            MessageType::S2CMatchCancelSuccess => 16,
+            MessageType::S2CMatchCancelResult => 16,
             MessageType::S2CMatchStart => 48,
             MessageType::S2COpponentLeft => 9,
             MessageType::C2SForfeit => 9,
@@ -169,24 +170,26 @@ impl Decoder for MessageCodec {
             MessageType::S2CMatchList => 1008,
         };
         if length != legal_length {
-            error_invalid_data!(format!(
+            error_invalid_data!(
                 "Message of type {:?} should be of length {}, not {}.",
-                message_type, legal_length, length
-            ))
+                message_type,
+                legal_length,
+                length
+            )
         } else {
-            Ok(Some((message_type, message_bytes)))
+            Ok(Some(Message::unpack(&message_type, message_bytes)?))
         }
     }
 }
 
-impl Encoder<(MessageType, Bytes)> for MessageCodec {
+impl Encoder<Message> for MessageCodec {
     type Error = std::io::Error;
 
-    fn encode(&mut self, item: (MessageType, Bytes), dst: &mut BytesMut) -> Result<()> {
-        let (message_type, message_bytes) = item;
+    fn encode(&mut self, item: Message, dst: &mut BytesMut) -> Result<()> {
+        let (message_type, message_bytes) = item.pack();
         let length = message_bytes.len();
         if length > MESSAGE_LENGTH_MAX {
-            return error_invalid_data!(format!("Message of length {} is too large.", length));
+            return error_invalid_data!("Message of length {} is too large.", length);
         }
         dst.reserve(16 + message_bytes.len());
         let mut buffer = [0; 8];
@@ -199,14 +202,15 @@ impl Encoder<(MessageType, Bytes)> for MessageCodec {
     }
 }
 
-// unknown fields omitted
+// unknown or unused fields omitted
+#[derive(Debug, Copy, Clone)]
 pub enum Message {
     C2SGreet(C2SGreetBody),
     S2CGreet,
     C2SMatchCreateOrJoin(C2SMatchCreateOrJoinBody),
-    S2CMatchCreateOrJoinSuccess(S2CMatchCreateOrJoinSuccessBody),
+    S2CMatchCreateOrJoinResult(S2CMatchCreateOrJoinResultBody),
     C2SMatchCancel,
-    S2CMatchCancelSuccess(S2CMatchCancelSuccessBody),
+    S2CMatchCancelResult(S2CMatchCancelResultBody),
     S2CMatchStart(S2CMatchStartBody),
     S2COpponentLeft,
     C2SForfeit,
@@ -228,7 +232,7 @@ pub struct C2SMatchCreateOrJoinBody {
     pub passcode: i64,
 }
 #[derive(Debug, Copy, Clone)]
-pub struct S2CMatchCreateOrJoinSuccessBody {
+pub struct S2CMatchCreateOrJoinResultBody {
     pub color: OptionalColorWithRandom,
     pub clock: OptionalClock,
     pub variant: i64,
@@ -236,8 +240,8 @@ pub struct S2CMatchCreateOrJoinSuccessBody {
     pub passcode: i64,
 }
 #[derive(Debug, Copy, Clone)]
-pub struct S2CMatchCancelSuccessBody {
-    pub cancel_count: i64,
+pub struct S2CMatchCancelResultBody {
+    pub result: i64,
 }
 #[derive(Debug, Copy, Clone)]
 pub struct S2CMatchStartBody {
@@ -304,7 +308,7 @@ impl Message {
                 }
                 (MessageType::S2CGreet, bytes)
             }
-            Message::S2CMatchCreateOrJoinSuccess(body) => {
+            Message::S2CMatchCreateOrJoinResult(body) => {
                 write_i64_le(&mut bytes, 1); // unknown
                 write_i64_le(&mut bytes, 0); // unknown
                 write_i64_le(&mut bytes, body.color as i64);
@@ -314,8 +318,8 @@ impl Message {
                 write_i64_le(&mut bytes, body.passcode);
                 (MessageType::S2CGreet, bytes)
             }
-            Message::S2CMatchCancelSuccess(body) => {
-                write_i64_le(&mut bytes, body.cancel_count);
+            Message::S2CMatchCancelResult(body) => {
+                write_i64_le(&mut bytes, body.result);
                 (MessageType::S2CGreet, bytes)
             }
             Message::S2CMatchStart(body) => {
@@ -370,7 +374,7 @@ impl Message {
                 write_u64_le(&mut bytes, body.server_history_matches_count);
                 (MessageType::S2CGreet, bytes)
             }
-            _ => unimplemented!(),
+            _ => unreachable!(),
         }
     }
 
@@ -428,7 +432,7 @@ impl Message {
                 }))
             }
             MessageType::C2SMatchListRequest => Ok(Message::C2SMatchListRequest),
-            _ => unimplemented!(),
+            _ => unreachable!(),
         }
     }
 }
@@ -456,10 +460,10 @@ pub fn write_u64_le(bytes: &mut BytesMut, n: u64) {
 pub fn try_i64_to_enum<T: num::FromPrimitive>(v: i64) -> Result<T> {
     match T::from_i64(v) {
         Some(v) => Ok(v),
-        None => error_invalid_data!(format!(
+        None => error_invalid_data!(
             "Unknown value {} for enum type {}.",
             v,
             std::any::type_name::<T>()
-        )),
+        ),
     }
 }
