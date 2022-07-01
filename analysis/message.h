@@ -1,6 +1,7 @@
 #include <stdint.h>
 
 /* notes:
+All data are little-endian.
 A packet is a combination of one or more messages.
 The field length excludes itself.
 Comments of unknown fields are seen values.
@@ -76,9 +77,9 @@ struct S2CMatchStart
     int64_t type; /* = 7 */
     int64_t clock; /* No Clock = 1, Short = 2, Medium = 3, Long = 4 */
     int64_t variant; /* Standard = 1, Random = 34, Turn Zero = 35, ... */
-    int64_t matchId; /* probably some auto increasing identifier of the match */
+    uint64_t matchId; /* probably some auto increasing identifier of the match */
     int64_t color; /* yours, White = 0, Black = 1 */
-    int64_t messageId; /* probably some auto increasing identifier of the message */
+    uint64_t messageId; /* probably some auto increasing identifier of the message */
 };
 
 /* type = 8 is never seen, why? */
@@ -107,18 +108,18 @@ struct C2SOrS2CAction
     int64_t type; /* = 11 */
     int64_t actionType; /* Move = 1, Undo Move = 2, Submit Moves = 3, Header = 6 */
     int64_t color; /* White = 0, Black = 1 */
-    int64_t messageId; /* C2S = 0, S2C = probably some auto increasing identifier of the message */
+    uint64_t messageId; /* C2S = 0, S2C = probably some auto increasing identifier of the message */
     /* following = 0 if actionType is not Move = 1 */
     int64_t srcL;
     int64_t srcT;
     int64_t srcBoardColor; /* White = 0, Black = 1 */
     int64_t srcY; /* starts from 0 */
     int64_t srcX; /* starts from 0 */
-    int64_t destL;
-    int64_t destT;
-    int64_t destBoardColor; /* White = 0, Black = 1 */
-    int64_t destY; /* starts from 0 */
-    int64_t destX; /* starts from 0 */
+    int64_t dstL;
+    int64_t dstT;
+    int64_t dstBoardColor; /* White = 0, Black = 1 */
+    int64_t dstY; /* starts from 0 */
+    int64_t dstX; /* starts from 0 */
 };
 
 struct C2SMatchListRequest
@@ -152,9 +153,9 @@ struct S2CMatchList
     {
         int64_t status; /* Completed = 0, In Progress = 1 */
         int64_t clock; /* No Clock = 1, Short = 2, Medium = 3, Long = 4 */
-        int64_t variant; /* None = 0, Standard = 1, Random = 34, Turn Zero = 35, ... */
+        int64_t variant; /* Standard = 1, Random = 34, Turn Zero = 35, ... */
         int64_t visibility; /* Public = 1, Private = 2 */
-        int64_t timePassed; /* seconds */
+        int64_t secondsPassed;
     } serverHistoryMatches[13];
-    int64_t serverHistoryMatchedCount;
+    int64_t serverHistoryMatchesCount;
 };
