@@ -1,0 +1,26 @@
+[package]
+name = "fivedcserver"
+version = "0.1.0"
+authors = ["NKID00 <NKID00@pm.me>"]
+license = "MIT"
+edition = "2021"
+build = "src/build.rs"
+
+[dependencies]
+tokio = { version = "^1.19.2", features = ["rt-multi-thread", "net", "sync", "time", "macros"] }
+tokio-util = { version = "^0.7.3", features = ["codec"] }
+futures = "^0.3.21"
+bytes = "^1.1.0"
+enum_primitive = "^0.1.1"
+num = "^0.4.0"
+tracing = "^0.1.35"
+tracing-subscriber = "^0.3.11"
+byteorder = "^1.4.3"
+rand = "^0.8.5"
+
+[build-dependencies]
+vergen = "^7.2.1"
+
+[[bin]]
+name = "5dcserver"
+path = "src/main.rs"
