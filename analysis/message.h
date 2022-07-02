@@ -106,14 +106,14 @@ struct C2SOrS2CAction
 {
     uint64_t length; /* = 112 */
     int64_t type; /* = 11 */
-    int64_t actionType; /* Move = 1, Undo Move = 2, Submit Moves = 3, Display Check Reason = 5, Header = 6 */
+    int64_t actionType; /* Move = 1, Undo Move = 2, Submit Moves = 3, Reset Puzzle (it does reset the whole game, be cautious!) = 4, Display Check Reason = 5, Header = 6 */
     int64_t color; /* White = 0, Black = 1 */
     uint64_t messageId; /* C2S = 0, S2C = probably some auto increasing identifier of the message */
-    /* following = 0 if actionType is not Move = 1 or Display Check Reason = 5 */
+    /* following ignored if actionType is not Move = 1 or Display Check Reason = 5 */
     int64_t srcL;
     int64_t srcT;
     int64_t srcBoardColor; /* White = 0, Black = 1 */
-    /* following = 0 if actionType is not Move = 1 */
+    /* following ignored if actionType is not Move = 1 */
     int64_t srcY; /* starts from 0 */
     int64_t srcX; /* starts from 0 */
     int64_t dstL;
