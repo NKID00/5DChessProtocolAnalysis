@@ -1,6 +1,6 @@
 use indexmap::IndexMap;
 use std::collections::HashMap;
-use std::io::Result;
+use std::io::{ErrorKind, Result};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -80,8 +80,7 @@ impl ConnectionState {
 pub async fn handle_connection(ss: Arc<ServerState>, stream: TcpStream, addr: SocketAddr) {
     let mut cs = ConnectionState::new(ss, addr, stream);
     match handle_connection_main_loop(&mut cs).await {
-        Ok(()) => {}
-        Err(e) => match cs.state {
+        Err(e) if e.kind() != ErrorKind::ConnectionAborted => match cs.state {
             ConnectionStateEnum::Playing => match cs.addr_peer {
                 Some(ref addr_peer) => {
                     error!(
@@ -99,6 +98,7 @@ pub async fn handle_connection(ss: Arc<ServerState>, stream: TcpStream, addr: So
                 error!("[{}:{}] {}", cs.addr.ip(), cs.addr.port(), e);
             }
         },
+        _ => {}
     }
     // clean resources, remove match from public_matches, etc.
     match cs.state {
@@ -266,6 +266,13 @@ async fn handle_connection_main_loop(cs: &mut ConnectionState) -> Result<()> {
                     todo!()
                 }
             },
+        }
+        cs.io.flush().await?;
+        match cs.io_peer {
+            Some(ref mut io) => {
+                io.flush().await?;
+            }
+            None => {}
         }
     }
 }

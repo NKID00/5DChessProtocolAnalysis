@@ -4,7 +4,7 @@ use enum_primitive::{enum_from_primitive, enum_from_primitive_impl, enum_from_pr
 use futures::{SinkExt, StreamExt};
 use rand::Rng;
 use std::collections::HashMap;
-use std::io::Result;
+use std::io::{Error, Result};
 use tokio::{net::TcpStream, sync::Mutex, time::Instant};
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
 
@@ -25,10 +25,7 @@ macro_rules! err_invalid_data {
 #[macro_export]
 macro_rules! err_disconnected {
     () => {
-        Err(std::io::Error::new(
-            std::io::ErrorKind::ConnectionAborted,
-            "Disconnected.",
-        ))
+        Err(std::io::Error::new(std::io::ErrorKind::ConnectionAborted, "Disconnected."))
     };
 }
 
@@ -87,7 +84,7 @@ impl Color {
     }
 }
 impl TryFrom<OptionalColorWithRandom> for Color {
-    type Error = std::io::Error;
+    type Error = Error;
 
     fn try_from(value: OptionalColorWithRandom) -> Result<Self> {
         match value {
