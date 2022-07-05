@@ -2,7 +2,6 @@
 
 /* notes:
 All data are little-endian.
-A packet is a combination of one or more messages.
 The field length excludes itself.
 Comments of unknown fields are seen values.
 Passcode seems to identify not started matches (both public and private).
@@ -50,10 +49,10 @@ struct S2CMatchCreateOrJoinResult
     int64_t type; /* = 4 */
     int64_t result; /* Success = 1, Failed = 0 */
     int64_t reason; /* unconfirmed, Success = 0, Match Not Found = 1 */
-    int64_t color; /* Random = 1, White = 2, Black = 3 */
-    int64_t clock; /* No Clock = 1, Short = 2, Medium = 3, Long = 4 */
-    int64_t variant; /* Standard = 1, Random = 34, Turn Zero = 35, ... */
-    int64_t visibility; /* Public = 1, Private = 2 */
+    int64_t color; /* Failed = 0, Random = 1, White = 2, Black = 3 */
+    int64_t clock; /* Failed = 0, No Clock = 1, Short = 2, Medium = 3, Long = 4 */
+    int64_t variant; /* Failed = 0, Standard = 1, Random = 34, Turn Zero = 35, ... */
+    int64_t visibility; /* Failed = 0, Public = 1, Private = 2 */
     int64_t passcode; /* Success = passcode, Failed = -1, provide even when match is public */
 };
 

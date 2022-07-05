@@ -1,18 +1,31 @@
 use byteorder::{ByteOrder, LittleEndian};
-use bytes::BytesMut;
+use bytes::{Bytes, BytesMut};
 use enum_primitive::{enum_from_primitive, enum_from_primitive_impl, enum_from_primitive_impl_ty};
+use futures::{SinkExt, StreamExt};
 use rand::Rng;
+use std::collections::HashMap;
 use std::io::Result;
-use tokio_util::codec::{Decoder, Encoder};
+use tokio::{net::TcpStream, sync::Mutex};
+use tokio_util::codec::{Framed, LengthDelimitedCodec};
 
 pub const MESSAGE_LENGTH_MAX: usize = 4096; // >= 1008, prevent attacks
 
 #[macro_export]
-macro_rules! error_invalid_data {
+macro_rules! err_invalid_data {
     ( $($arg:tt)* ) => {
         Err(std::io::Error::new(
             std::io::ErrorKind::InvalidData,
             format!($($arg)*),
+        ))
+    };
+}
+
+#[macro_export]
+macro_rules! err_disconnected {
+    () => {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::ConnectionAborted,
+            "Disconnected.",
         ))
     };
 }
@@ -28,12 +41,63 @@ enum_from_primitive! {
     }
 }
 
+impl OptionalColorWithRandom {
+    pub fn reversed(&self) -> Self {
+        match self {
+            OptionalColorWithRandom::White => OptionalColorWithRandom::Black,
+            OptionalColorWithRandom::Black => OptionalColorWithRandom::White,
+            _ => self.clone(),
+        }
+    }
+
+    pub fn determined(&self) -> Self {
+        match self {
+            OptionalColorWithRandom::Random => match rand::thread_rng().gen_range(0..=1) {
+                0 => OptionalColorWithRandom::White,
+                1 => OptionalColorWithRandom::Black,
+                _ => unreachable!(),
+            },
+            _ => self.clone(),
+        }
+    }
+}
+
+impl From<Color> for OptionalColorWithRandom {
+    fn from(value: Color) -> Self {
+        match value {
+            Color::White => OptionalColorWithRandom::White,
+            Color::Black => OptionalColorWithRandom::Black,
+        }
+    }
+}
+
 enum_from_primitive! {
     #[repr(i64)]
     #[derive(Debug, Copy, Clone, PartialEq)]
     pub enum Color {
         White = 0,
         Black = 1
+    }
+}
+
+impl Color {
+    pub fn reversed(&self) -> Self {
+        match self {
+            Color::White => Color::White,
+            Color::Black => Color::Black,
+        }
+    }
+}
+
+impl TryFrom<OptionalColorWithRandom> for Color {
+    type Error = std::io::Error;
+
+    fn try_from(value: OptionalColorWithRandom) -> Result<Self> {
+        match value {
+            OptionalColorWithRandom::White => Ok(Color::White),
+            OptionalColorWithRandom::Black => Ok(Color::Black),
+            _ => err_invalid_data!("{:?} cannot be converted to Color.", value),
+        }
     }
 }
 
@@ -133,30 +197,9 @@ enum_from_primitive! {
     }
 }
 
-pub struct MessageCodec {}
-impl Decoder for MessageCodec {
-    type Item = Message;
-    type Error = std::io::Error;
-
-    fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>> {
-        if src.len() < 8 {
-            return Ok(None);
-        }
-        let length = LittleEndian::read_u64(&src[0..7]) as usize;
-        if length > MESSAGE_LENGTH_MAX {
-            return error_invalid_data!("Message of length {} is too large.", length);
-        }
-        if src.len() < 8 + length {
-            src.reserve(8 + length - src.len());
-            return Ok(None);
-        }
-
-        let length = read_u64_le(src);
-        let mut message_bytes = src.split_to(length as usize);
-        let message_type = try_i64_to_enum(read_i64_le(&mut message_bytes))?;
-
-        // check message length
-        let legal_length = match message_type {
+impl MessageType {
+    pub fn legal_length(&self) -> usize {
+        match self {
             MessageType::C2SGreet => 56,
             MessageType::S2CGreet => 56,
             MessageType::C2SMatchCreateOrJoin => 48,
@@ -169,37 +212,7 @@ impl Decoder for MessageCodec {
             MessageType::C2SOrS2CAction => 112,
             MessageType::C2SMatchListRequest => 9,
             MessageType::S2CMatchList => 1008,
-        };
-        if length != legal_length {
-            error_invalid_data!(
-                "Message of type {:?} should be of length {}, not {}.",
-                message_type,
-                legal_length,
-                length
-            )
-        } else {
-            Ok(Some(Message::unpack(&message_type, message_bytes)?))
         }
-    }
-}
-
-impl Encoder<Message> for MessageCodec {
-    type Error = std::io::Error;
-
-    fn encode(&mut self, item: Message, dst: &mut BytesMut) -> Result<()> {
-        let (message_type, message_bytes) = item.pack();
-        let length = message_bytes.len();
-        if length > MESSAGE_LENGTH_MAX {
-            return error_invalid_data!("Message of length {} is too large.", length);
-        }
-        dst.reserve(16 + message_bytes.len());
-        let mut buffer = [0; 8];
-        LittleEndian::write_u64(&mut buffer, 8 + message_bytes.len() as u64);
-        dst.extend(buffer);
-        LittleEndian::write_u64(&mut buffer, message_type as u64);
-        dst.extend(buffer);
-        dst.extend(message_bytes);
-        Ok(())
     }
 }
 
@@ -233,7 +246,12 @@ pub struct C2SMatchCreateOrJoinBody {
     pub passcode: i64,
 }
 #[derive(Debug, Copy, Clone)]
-pub struct S2CMatchCreateOrJoinResultBody {
+pub enum S2CMatchCreateOrJoinResultBody {
+    Success(S2CMatchCreateOrJoinResultSuccessBody),
+    Failed,
+}
+#[derive(Debug, Copy, Clone)]
+pub struct S2CMatchCreateOrJoinResultSuccessBody {
     pub color: OptionalColorWithRandom,
     pub clock: OptionalClock,
     pub variant: i64,
@@ -241,8 +259,9 @@ pub struct S2CMatchCreateOrJoinResultBody {
     pub passcode: i64,
 }
 #[derive(Debug, Copy, Clone)]
-pub struct S2CMatchCancelResultBody {
-    pub result: i64,
+pub enum S2CMatchCancelResultBody {
+    Success,
+    Failed,
 }
 #[derive(Debug, Copy, Clone)]
 pub struct S2CMatchStartBody {
@@ -299,29 +318,66 @@ pub struct S2CMatchListServerHistoryMatch {
 }
 
 impl Message {
-    pub fn pack(&self) -> (MessageType, BytesMut) {
+    pub fn message_type(&self) -> MessageType {
+        match self {
+            Message::C2SGreet(_) => MessageType::C2SGreet,
+            Message::S2CGreet => MessageType::S2CGreet,
+            Message::C2SMatchCreateOrJoin(_) => MessageType::C2SMatchCreateOrJoin,
+            Message::S2CMatchCreateOrJoinResult(_) => MessageType::S2CMatchCreateOrJoinResult,
+            Message::C2SMatchCancel => MessageType::C2SMatchCancel,
+            Message::S2CMatchCancelResult(_) => MessageType::S2CMatchCancelResult,
+            Message::S2CMatchStart(_) => MessageType::S2CMatchStart,
+            Message::S2COpponentLeft => MessageType::S2COpponentLeft,
+            Message::C2SForfeit => MessageType::C2SForfeit,
+            Message::C2SOrS2CAction(_) => MessageType::C2SOrS2CAction,
+            Message::C2SMatchListRequest => MessageType::C2SMatchListRequest,
+            Message::S2CMatchList(_) => MessageType::S2CMatchList,
+        }
+    }
+
+    pub fn legal_length(&self) -> usize {
+        self.message_type().legal_length()
+    }
+
+    pub fn pack(&self) -> Result<Bytes> {
         let mut bytes = BytesMut::new();
+        write_i64_le(&mut bytes, self.message_type() as i64);
         match self {
             Message::S2CGreet => {
                 write_i64_le(&mut bytes, 1); // version, unconfirmed
                 for _ in 0..5 {
                     write_i64_le(&mut bytes, 0); // unknown
                 }
-                (MessageType::S2CGreet, bytes)
             }
             Message::S2CMatchCreateOrJoinResult(body) => {
-                write_i64_le(&mut bytes, 1); // unknown
-                write_i64_le(&mut bytes, 0); // unknown
-                write_i64_le(&mut bytes, body.color as i64);
-                write_i64_le(&mut bytes, body.clock as i64);
-                write_i64_le(&mut bytes, body.variant);
-                write_i64_le(&mut bytes, body.visibility as i64);
-                write_i64_le(&mut bytes, body.passcode);
-                (MessageType::S2CGreet, bytes)
+                match body {
+                    S2CMatchCreateOrJoinResultBody::Success(body) => {
+                        write_i64_le(&mut bytes, 1); // success
+                        write_i64_le(&mut bytes, 0); // success
+                        write_i64_le(&mut bytes, body.color as i64);
+                        write_i64_le(&mut bytes, body.clock as i64);
+                        write_i64_le(&mut bytes, body.variant);
+                        write_i64_le(&mut bytes, body.visibility as i64);
+                        write_i64_le(&mut bytes, body.passcode);
+                    }
+                    S2CMatchCreateOrJoinResultBody::Failed => {
+                        write_i64_le(&mut bytes, 0); // failed
+                        write_i64_le(&mut bytes, 1); // failed
+                        for _ in 0..4 {
+                            write_i64_le(&mut bytes, 0);
+                        }
+                        write_i64_le(&mut bytes, -1);
+                    }
+                };
             }
             Message::S2CMatchCancelResult(body) => {
-                write_i64_le(&mut bytes, body.result);
-                (MessageType::S2CGreet, bytes)
+                write_i64_le(
+                    &mut bytes,
+                    match body {
+                        S2CMatchCancelResultBody::Success => 1,
+                        S2CMatchCancelResultBody::Failed => 0,
+                    },
+                );
             }
             Message::S2CMatchStart(body) => {
                 write_i64_le(&mut bytes, body.clock as i64);
@@ -329,11 +385,9 @@ impl Message {
                 write_u64_le(&mut bytes, body.match_id);
                 write_i64_le(&mut bytes, body.color as i64);
                 write_u64_le(&mut bytes, body.message_id);
-                (MessageType::S2CGreet, bytes)
             }
             Message::S2COpponentLeft => {
                 bytes.extend_from_slice(&[0]); // unknown
-                (MessageType::S2CGreet, bytes)
             }
             Message::C2SOrS2CAction(body) => {
                 write_i64_le(&mut bytes, body.action_type as i64);
@@ -349,7 +403,6 @@ impl Message {
                 write_i64_le(&mut bytes, body.dst_board_color as i64);
                 write_i64_le(&mut bytes, body.dst_y);
                 write_i64_le(&mut bytes, body.dst_x);
-                (MessageType::S2CGreet, bytes)
             }
             Message::S2CMatchList(body) => {
                 write_i64_le(&mut bytes, 1); // unknown
@@ -373,25 +426,53 @@ impl Message {
                     write_i64_le(&mut bytes, body.server_history_matches[i].seconds_passed);
                 }
                 write_u64_le(&mut bytes, body.server_history_matches_count);
-                (MessageType::S2CGreet, bytes)
             }
-            _ => unreachable!(),
+            _ => {
+                return err_invalid_data!(
+                    "Message type {:?} shouldn't be packed.",
+                    self.message_type()
+                );
+            }
+        };
+
+        // check message length
+        if bytes.len() != self.legal_length() {
+            return err_invalid_data!(
+                "Message of type {:?} should be of length {}, not {}.",
+                self.message_type(),
+                self.legal_length(),
+                bytes.len()
+            );
         }
+        Ok(bytes.into())
     }
 
-    pub fn unpack(message_type: &MessageType, mut message_bytes: BytesMut) -> Result<Message> {
+    pub fn unpack(mut bytes: BytesMut) -> Result<Message> {
+        let length = bytes.len();
+        let message_type: MessageType = try_i64_to_enum(read_i64_le(&mut bytes))?;
+
+        // check message length
+        if length != message_type.legal_length() {
+            return err_invalid_data!(
+                "Message of type {:?} should be of length {}, not {}.",
+                message_type,
+                message_type.legal_length(),
+                length
+            );
+        }
+
         match message_type {
             MessageType::C2SGreet => {
-                let version1 = read_i64_le(&mut message_bytes);
-                let version2 = read_i64_le(&mut message_bytes);
+                let version1 = read_i64_le(&mut bytes);
+                let version2 = read_i64_le(&mut bytes);
                 Ok(Message::C2SGreet(C2SGreetBody { version1, version2 }))
             }
             MessageType::C2SMatchCreateOrJoin => {
-                let color = try_i64_to_enum(read_i64_le(&mut message_bytes))?;
-                let clock = try_i64_to_enum(read_i64_le(&mut message_bytes))?;
-                let variant = read_i64_le(&mut message_bytes);
-                let visibility = try_i64_to_enum(read_i64_le(&mut message_bytes))?;
-                let passcode = read_i64_le(&mut message_bytes);
+                let color = try_i64_to_enum(read_i64_le(&mut bytes))?;
+                let clock = try_i64_to_enum(read_i64_le(&mut bytes))?;
+                let variant = read_i64_le(&mut bytes);
+                let visibility = try_i64_to_enum(read_i64_le(&mut bytes))?;
+                let passcode = read_i64_le(&mut bytes);
                 Ok(Message::C2SMatchCreateOrJoin(C2SMatchCreateOrJoinBody {
                     color,
                     clock,
@@ -403,19 +484,19 @@ impl Message {
             MessageType::C2SMatchCancel => Ok(Message::C2SMatchCancel),
             MessageType::C2SForfeit => Ok(Message::C2SForfeit),
             MessageType::C2SOrS2CAction => {
-                let action_type = try_i64_to_enum(read_i64_le(&mut message_bytes))?;
-                let color = try_i64_to_enum(read_i64_le(&mut message_bytes))?;
-                let message_id = read_u64_le(&mut message_bytes);
-                let src_l = read_i64_le(&mut message_bytes);
-                let src_t = read_i64_le(&mut message_bytes);
-                let src_board_color = try_i64_to_enum(read_i64_le(&mut message_bytes))?;
-                let src_x = read_i64_le(&mut message_bytes);
-                let src_y = read_i64_le(&mut message_bytes);
-                let dst_l = read_i64_le(&mut message_bytes);
-                let dst_t = read_i64_le(&mut message_bytes);
-                let dst_board_color = try_i64_to_enum(read_i64_le(&mut message_bytes))?;
-                let dst_x = read_i64_le(&mut message_bytes);
-                let dst_y = read_i64_le(&mut message_bytes);
+                let action_type = try_i64_to_enum(read_i64_le(&mut bytes))?;
+                let color = try_i64_to_enum(read_i64_le(&mut bytes))?;
+                let message_id = read_u64_le(&mut bytes);
+                let src_l = read_i64_le(&mut bytes);
+                let src_t = read_i64_le(&mut bytes);
+                let src_board_color = try_i64_to_enum(read_i64_le(&mut bytes))?;
+                let src_x = read_i64_le(&mut bytes);
+                let src_y = read_i64_le(&mut bytes);
+                let dst_l = read_i64_le(&mut bytes);
+                let dst_t = read_i64_le(&mut bytes);
+                let dst_board_color = try_i64_to_enum(read_i64_le(&mut bytes))?;
+                let dst_x = read_i64_le(&mut bytes);
+                let dst_y = read_i64_le(&mut bytes);
                 Ok(Message::C2SOrS2CAction(C2SOrS2CActionBody {
                     action_type,
                     color,
@@ -433,8 +514,43 @@ impl Message {
                 }))
             }
             MessageType::C2SMatchListRequest => Ok(Message::C2SMatchListRequest),
-            _ => unreachable!(),
+            _ => err_invalid_data!("Message type {:?} shouldn't be unpacked.", message_type),
         }
+    }
+}
+
+pub struct MessageIO {
+    framed: Framed<TcpStream, LengthDelimitedCodec>,
+}
+
+impl MessageIO {
+    pub fn new(stream: TcpStream) -> Self {
+        MessageIO {
+            framed: LengthDelimitedCodec::builder()
+                .little_endian()
+                .length_field_type::<u64>()
+                .max_frame_length(MESSAGE_LENGTH_MAX)
+                .new_framed(stream),
+        }
+    }
+
+    pub async fn get(&mut self) -> Result<Message> {
+        match self.framed.next().await {
+            Some(Ok(message)) => Message::unpack(message),
+            Some(Err(e)) => Err(e),
+            None => err_disconnected!(),
+        }
+    }
+
+    pub async fn put(&mut self, message: Message) -> Result<()> {
+        match message.pack() {
+            Ok(message) => self.framed.feed(message).await,
+            Err(e) => Err(e),
+        }
+    }
+
+    pub async fn flush(&mut self) -> Result<()> {
+        self.framed.flush().await
     }
 }
 
@@ -461,7 +577,7 @@ pub fn write_u64_le(bytes: &mut BytesMut, n: u64) {
 pub fn try_i64_to_enum<T: num::FromPrimitive>(v: i64) -> Result<T> {
     match T::from_i64(v) {
         Some(v) => Ok(v),
-        None => error_invalid_data!(
+        None => err_invalid_data!(
             "Unknown value {} for enum type {}.",
             v,
             std::any::type_name::<T>()
@@ -469,6 +585,17 @@ pub fn try_i64_to_enum<T: num::FromPrimitive>(v: i64) -> Result<T> {
     }
 }
 
-pub fn generate_random_passcode_internal() -> u64 {
+pub fn generate_random_passcode_internal() -> i64 {
     rand::thread_rng().gen_range(0..=2985983) // kkkkkk = 2985983
+}
+
+pub async fn generate_random_passcode_internal_with_exceptions(
+    matches: &Mutex<HashMap<i64, InternalMatch>>,
+) -> i64 {
+    loop {
+        let v = generate_random_passcode_internal();
+        if !matches.lock().await.contains_key(&v) {
+            return v;
+        }
+    }
 }
