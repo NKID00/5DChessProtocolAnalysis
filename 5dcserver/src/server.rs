@@ -2,6 +2,7 @@ use indexmap::IndexMap;
 use std::collections::HashMap;
 use std::io::{ErrorKind, Result};
 use std::net::SocketAddr;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::{net::TcpStream, select};
@@ -16,6 +17,7 @@ pub struct ServerState {
     pub matches: Mutex<HashMap<Passcode, MatchSettings>>,
     pub public_matches: Mutex<HashMap<Passcode, MatchSettingsWithoutVisibility>>,
     pub server_history_matches: Mutex<IndexMap<i64 /* Match ID */, ServerHistoryMatch>>,
+    pub running: AtomicBool,
 }
 
 impl ServerState {
@@ -26,6 +28,7 @@ impl ServerState {
             matches: Mutex::new(HashMap::<Passcode, MatchSettings>::new()),
             public_matches: Mutex::new(HashMap::<Passcode, MatchSettingsWithoutVisibility>::new()),
             server_history_matches: Mutex::new(IndexMap::<i64, ServerHistoryMatch>::new()),
+            running: AtomicBool::new(true),
         }
     }
 }
@@ -101,6 +104,7 @@ pub async fn handle_connection(ss: Arc<ServerState>, stream: TcpStream, addr: So
         _ => {}
     }
     // clean resources, remove match from public_matches, etc.
+    let _ = cs.io.flush().await;
     match cs.state {
         ConnectionStateEnum::Idle => {
             info!("[{}:{}] Disconnected.", addr.ip(), addr.port());
@@ -148,7 +152,7 @@ pub async fn handle_connection(ss: Arc<ServerState>, stream: TcpStream, addr: So
 }
 
 async fn handle_connection_main_loop(cs: &mut ConnectionState) -> Result<()> {
-    loop {
+    while cs.ss.running.load(Ordering::Relaxed) {
         match cs.state {
             ConnectionStateEnum::Idle => match cs.io.get().await? {
                 Message::C2SGreet(_body) => {
@@ -275,4 +279,5 @@ async fn handle_connection_main_loop(cs: &mut ConnectionState) -> Result<()> {
             None => {}
         }
     }
+    Ok(())
 }
