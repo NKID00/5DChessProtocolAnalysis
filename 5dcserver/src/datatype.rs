@@ -5,10 +5,13 @@ use futures::{SinkExt, StreamExt};
 use rand::Rng;
 use std::collections::HashMap;
 use std::io::Result;
-use tokio::{net::TcpStream, sync::Mutex};
+use tokio::{net::TcpStream, sync::Mutex, time::Instant};
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
 
 pub const MESSAGE_LENGTH_MAX: usize = 4096; // >= 1008, prevent attacks
+
+pub type Variant = i64;
+pub type Passcode = i64;
 
 #[macro_export]
 macro_rules! err_invalid_data {
@@ -19,7 +22,6 @@ macro_rules! err_invalid_data {
         ))
     };
 }
-
 #[macro_export]
 macro_rules! err_disconnected {
     () => {
@@ -40,7 +42,6 @@ enum_from_primitive! {
         Black = 3
     }
 }
-
 impl OptionalColorWithRandom {
     pub fn reversed(&self) -> Self {
         match self {
@@ -61,7 +62,6 @@ impl OptionalColorWithRandom {
         }
     }
 }
-
 impl From<Color> for OptionalColorWithRandom {
     fn from(value: Color) -> Self {
         match value {
@@ -70,7 +70,6 @@ impl From<Color> for OptionalColorWithRandom {
         }
     }
 }
-
 enum_from_primitive! {
     #[repr(i64)]
     #[derive(Debug, Copy, Clone, PartialEq)]
@@ -79,7 +78,6 @@ enum_from_primitive! {
         Black = 1
     }
 }
-
 impl Color {
     pub fn reversed(&self) -> Self {
         match self {
@@ -88,7 +86,6 @@ impl Color {
         }
     }
 }
-
 impl TryFrom<OptionalColorWithRandom> for Color {
     type Error = std::io::Error;
 
@@ -100,7 +97,6 @@ impl TryFrom<OptionalColorWithRandom> for Color {
         }
     }
 }
-
 enum_from_primitive! {
     #[repr(i64)]
     #[derive(Debug, Copy, Clone, PartialEq)]
@@ -112,7 +108,6 @@ enum_from_primitive! {
         Long = 4
     }
 }
-
 enum_from_primitive! {
     #[repr(i64)]
     #[derive(Debug, Copy, Clone, PartialEq)]
@@ -121,7 +116,6 @@ enum_from_primitive! {
         Private = 2
     }
 }
-
 enum_from_primitive! {
     #[repr(i64)]
     #[derive(Debug, Copy, Clone, PartialEq)]
@@ -133,7 +127,6 @@ enum_from_primitive! {
         Header = 6
     }
 }
-
 enum_from_primitive! {
     #[repr(i64)]
     #[derive(Debug, Copy, Clone, PartialEq)]
@@ -144,37 +137,57 @@ enum_from_primitive! {
 }
 
 #[derive(Debug, Copy, Clone)]
-pub struct InternalMatch {
+pub struct MatchSettings {
     pub color: OptionalColorWithRandom,
     pub clock: OptionalClock,
-    pub variant: i64,
+    pub variant: Variant,
     pub visibility: Visibility,
-    pub passcode: i64,
+    pub passcode: Passcode,
+    pub match_id: i64,
 }
-
+impl MatchSettings {
+    pub fn new(m: MatchSettingsWithoutVisibility, visibility: Visibility) -> Self {
+        MatchSettings {
+            color: m.color,
+            clock: m.clock,
+            variant: m.variant,
+            visibility,
+            passcode: m.passcode,
+            match_id: m.match_id,
+        }
+    }
+}
 #[derive(Debug, Copy, Clone)]
-pub struct PublicMatch {
+pub struct MatchSettingsWithoutVisibility {
     pub color: OptionalColorWithRandom,
     pub clock: OptionalClock,
-    pub variant: i64,
-    pub passcode: i64,
+    pub variant: Variant,
+    pub passcode: Passcode,
+    pub match_id: i64,
 }
-
-#[derive(Debug, Copy, Clone)]
-pub struct PrivateMatch {
-    pub color: OptionalColorWithRandom,
-    pub clock: OptionalClock,
-    pub variant: i64,
-    pub passcode: i64,
+impl MatchSettingsWithoutVisibility {
+    pub fn new(m: MatchSettings) -> Self {
+        MatchSettingsWithoutVisibility {
+            color: m.color,
+            clock: m.clock,
+            variant: m.variant,
+            passcode: m.passcode,
+            match_id: m.match_id,
+        }
+    }
 }
-
+impl From<MatchSettings> for MatchSettingsWithoutVisibility {
+    fn from(m: MatchSettings) -> Self {
+        MatchSettingsWithoutVisibility::new(m)
+    }
+}
 #[derive(Debug, Copy, Clone)]
 pub struct ServerHistoryMatch {
-    pub color: OptionalColorWithRandom,
+    pub status: HistoryMatchStatus,
     pub clock: OptionalClock,
-    pub variant: i64,
+    pub variant: Variant,
     pub visibility: Visibility,
-    pub seconds_passed: u64,
+    pub time_start: Instant,
 }
 
 enum_from_primitive! {
@@ -196,7 +209,6 @@ enum_from_primitive! {
         S2CMatchList = 13
     }
 }
-
 impl MessageType {
     pub fn legal_length(&self) -> usize {
         match self {
@@ -238,25 +250,14 @@ pub struct C2SGreetBody {
     pub version2: i64,
 }
 #[derive(Debug, Copy, Clone)]
-pub struct C2SMatchCreateOrJoinBody {
-    pub color: OptionalColorWithRandom,
-    pub clock: OptionalClock,
-    pub variant: i64,
-    pub visibility: Visibility,
-    pub passcode: i64,
+pub enum C2SMatchCreateOrJoinBody {
+    Create(MatchSettings),
+    Join(i64),
 }
 #[derive(Debug, Copy, Clone)]
 pub enum S2CMatchCreateOrJoinResultBody {
-    Success(S2CMatchCreateOrJoinResultSuccessBody),
+    Success(MatchSettings),
     Failed,
-}
-#[derive(Debug, Copy, Clone)]
-pub struct S2CMatchCreateOrJoinResultSuccessBody {
-    pub color: OptionalColorWithRandom,
-    pub clock: OptionalClock,
-    pub variant: i64,
-    pub visibility: Visibility,
-    pub passcode: i64,
 }
 #[derive(Debug, Copy, Clone)]
 pub enum S2CMatchCancelResultBody {
@@ -265,17 +266,15 @@ pub enum S2CMatchCancelResultBody {
 }
 #[derive(Debug, Copy, Clone)]
 pub struct S2CMatchStartBody {
-    pub clock: OptionalClock,
-    pub variant: i64,
-    pub match_id: u64,
-    pub color: Color,
-    pub message_id: u64,
+    pub m: MatchSettingsWithoutVisibility,
+    pub match_id: i64,
+    pub message_id: i64,
 }
 #[derive(Debug, Copy, Clone)]
 pub struct C2SOrS2CActionBody {
     pub action_type: ActionType,
     pub color: Color,
-    pub message_id: u64,
+    pub message_id: i64,
     pub src_l: i64,
     pub src_t: i64,
     pub src_board_color: Color,
@@ -288,33 +287,46 @@ pub struct C2SOrS2CActionBody {
     pub dst_x: i64,
 }
 #[derive(Debug, Copy, Clone)]
-pub struct S2CMatchListBody {
+pub enum S2CMatchListBody {
+    Host(S2CMatchListHostBody),
+    Nonhost(S2CMatchListNonhostBody),
+}
+#[derive(Debug, Copy, Clone)]
+pub struct S2CMatchListHostBody {
     pub color: OptionalClock,
     pub clock: OptionalClock,
-    pub variant: i64,
-    pub passcode: i64,
-    pub is_host: bool,
-    pub public_matches: [S2CMatchListPublicMatch; 13],
-    pub public_matches_count: u64,
+    pub variant: Variant,
+    pub passcode: Passcode,
+    pub public_matches: [MatchSettingsWithoutVisibility; 13],
+    pub public_matches_count: usize,
     pub server_history_matches: [S2CMatchListServerHistoryMatch; 13],
-    pub server_history_matches_count: u64,
+    pub server_history_matches_count: usize,
 }
-#[repr(C)]
 #[derive(Debug, Copy, Clone)]
-pub struct S2CMatchListPublicMatch {
-    pub color: OptionalColorWithRandom,
-    pub clock: OptionalClock,
-    pub variant: i64,
-    pub passcode: i64,
+pub struct S2CMatchListNonhostBody {
+    pub public_matches: [MatchSettingsWithoutVisibility; 13],
+    pub public_matches_count: usize,
+    pub server_history_matches: [S2CMatchListServerHistoryMatch; 13],
+    pub server_history_matches_count: usize,
 }
-#[repr(C)]
 #[derive(Debug, Copy, Clone)]
 pub struct S2CMatchListServerHistoryMatch {
     pub status: HistoryMatchStatus,
     pub clock: OptionalClock,
-    pub variant: i64,
+    pub variant: Variant,
     pub visibility: Visibility,
-    pub seconds_passed: i64,
+    pub seconds_passed: u64,
+}
+impl From<ServerHistoryMatch> for S2CMatchListServerHistoryMatch {
+    fn from(m: ServerHistoryMatch) -> Self {
+        S2CMatchListServerHistoryMatch {
+            status: m.status,
+            clock: m.clock,
+            variant: m.variant,
+            visibility: m.visibility,
+            seconds_passed: Instant::now().duration_since(m.time_start).as_secs(),
+        }
+    }
 }
 
 impl Message {
@@ -380,11 +392,11 @@ impl Message {
                 );
             }
             Message::S2CMatchStart(body) => {
-                write_i64_le(&mut bytes, body.clock as i64);
-                write_i64_le(&mut bytes, body.variant);
-                write_u64_le(&mut bytes, body.match_id);
-                write_i64_le(&mut bytes, body.color as i64);
-                write_u64_le(&mut bytes, body.message_id);
+                write_i64_le(&mut bytes, body.m.clock as i64);
+                write_i64_le(&mut bytes, body.m.variant);
+                write_i64_le(&mut bytes, body.match_id);
+                write_i64_le(&mut bytes, body.m.color as i64);
+                write_i64_le(&mut bytes, body.message_id);
             }
             Message::S2COpponentLeft => {
                 bytes.extend_from_slice(&[0]); // unknown
@@ -392,7 +404,7 @@ impl Message {
             Message::C2SOrS2CAction(body) => {
                 write_i64_le(&mut bytes, body.action_type as i64);
                 write_i64_le(&mut bytes, body.color as i64);
-                write_u64_le(&mut bytes, body.message_id);
+                write_i64_le(&mut bytes, body.message_id);
                 write_i64_le(&mut bytes, body.src_l);
                 write_i64_le(&mut bytes, body.src_t);
                 write_i64_le(&mut bytes, body.src_board_color as i64);
@@ -404,29 +416,72 @@ impl Message {
                 write_i64_le(&mut bytes, body.dst_y);
                 write_i64_le(&mut bytes, body.dst_x);
             }
-            Message::S2CMatchList(body) => {
-                write_i64_le(&mut bytes, 1); // unknown
-                write_i64_le(&mut bytes, body.color as i64);
-                write_i64_le(&mut bytes, body.clock as i64);
-                write_i64_le(&mut bytes, body.variant as i64);
-                write_i64_le(&mut bytes, body.passcode);
-                write_i64_le(&mut bytes, if body.is_host { 1 } else { 0 });
-                for i in 0..13 {
-                    write_i64_le(&mut bytes, body.public_matches[i].color as i64);
-                    write_i64_le(&mut bytes, body.public_matches[i].clock as i64);
-                    write_i64_le(&mut bytes, body.public_matches[i].variant);
-                    write_i64_le(&mut bytes, body.public_matches[i].passcode);
+            Message::S2CMatchList(body) => match body {
+                S2CMatchListBody::Host(body) => {
+                    write_i64_le(&mut bytes, 1); // unknown
+                    write_i64_le(&mut bytes, body.color as i64);
+                    write_i64_le(&mut bytes, body.clock as i64);
+                    write_i64_le(&mut bytes, body.variant as i64);
+                    write_i64_le(&mut bytes, body.passcode);
+                    write_i64_le(&mut bytes, 1); // is_host
+                    for i in 0..body.public_matches_count {
+                        write_i64_le(&mut bytes, body.public_matches[i].color as i64);
+                        write_i64_le(&mut bytes, body.public_matches[i].clock as i64);
+                        write_i64_le(&mut bytes, body.public_matches[i].variant);
+                        write_i64_le(&mut bytes, body.public_matches[i].passcode);
+                    }
+                    for _ in body.public_matches_count..13 {
+                        for _ in 0..4 {
+                            write_i64_le(&mut bytes, 0);
+                        }
+                    }
+                    write_u64_le(&mut bytes, body.public_matches_count as u64);
+                    for i in 0..body.server_history_matches_count {
+                        write_i64_le(&mut bytes, body.server_history_matches[i].status as i64);
+                        write_i64_le(&mut bytes, body.server_history_matches[i].clock as i64);
+                        write_i64_le(&mut bytes, body.server_history_matches[i].variant);
+                        write_i64_le(&mut bytes, body.server_history_matches[i].visibility as i64);
+                        write_u64_le(&mut bytes, body.server_history_matches[i].seconds_passed);
+                    }
+                    for _ in body.server_history_matches_count..13 {
+                        for _ in 0..5 {
+                            write_i64_le(&mut bytes, 0);
+                        }
+                    }
+                    write_u64_le(&mut bytes, body.server_history_matches_count as u64);
                 }
-                write_u64_le(&mut bytes, body.public_matches_count);
-                for i in 0..13 {
-                    write_i64_le(&mut bytes, body.server_history_matches[i].status as i64);
-                    write_i64_le(&mut bytes, body.server_history_matches[i].clock as i64);
-                    write_i64_le(&mut bytes, body.server_history_matches[i].variant);
-                    write_i64_le(&mut bytes, body.server_history_matches[i].visibility as i64);
-                    write_i64_le(&mut bytes, body.server_history_matches[i].seconds_passed);
+                S2CMatchListBody::Nonhost(body) => {
+                    write_i64_le(&mut bytes, 1); // unknown
+                    for _ in 0..5 {
+                        write_i64_le(&mut bytes, 0);
+                    }
+                    for i in 0..body.public_matches_count {
+                        write_i64_le(&mut bytes, body.public_matches[i].color as i64);
+                        write_i64_le(&mut bytes, body.public_matches[i].clock as i64);
+                        write_i64_le(&mut bytes, body.public_matches[i].variant);
+                        write_i64_le(&mut bytes, body.public_matches[i].passcode);
+                    }
+                    for _ in body.public_matches_count..13 {
+                        for _ in 0..4 {
+                            write_i64_le(&mut bytes, 0);
+                        }
+                    }
+                    write_u64_le(&mut bytes, body.public_matches_count as u64);
+                    for i in 0..body.server_history_matches_count {
+                        write_i64_le(&mut bytes, body.server_history_matches[i].status as i64);
+                        write_i64_le(&mut bytes, body.server_history_matches[i].clock as i64);
+                        write_i64_le(&mut bytes, body.server_history_matches[i].variant);
+                        write_i64_le(&mut bytes, body.server_history_matches[i].visibility as i64);
+                        write_u64_le(&mut bytes, body.server_history_matches[i].seconds_passed);
+                    }
+                    for _ in body.server_history_matches_count..13 {
+                        for _ in 0..5 {
+                            write_i64_le(&mut bytes, 0);
+                        }
+                    }
+                    write_u64_le(&mut bytes, body.server_history_matches_count as u64);
                 }
-                write_u64_le(&mut bytes, body.server_history_matches_count);
-            }
+            },
             _ => {
                 return err_invalid_data!(
                     "Message type {:?} shouldn't be packed.",
@@ -473,20 +528,31 @@ impl Message {
                 let variant = read_i64_le(&mut bytes);
                 let visibility = try_i64_to_enum(read_i64_le(&mut bytes))?;
                 let passcode = read_i64_le(&mut bytes);
-                Ok(Message::C2SMatchCreateOrJoin(C2SMatchCreateOrJoinBody {
-                    color,
-                    clock,
-                    variant,
-                    visibility,
-                    passcode,
-                }))
+                if passcode < 0 {
+                    // create match
+                    Ok(Message::C2SMatchCreateOrJoin(
+                        C2SMatchCreateOrJoinBody::Create(MatchSettings {
+                            color,
+                            clock,
+                            variant,
+                            visibility,
+                            passcode,
+                            match_id: -1,
+                        }),
+                    ))
+                } else {
+                    // join match
+                    Ok(Message::C2SMatchCreateOrJoin(
+                        C2SMatchCreateOrJoinBody::Join(passcode),
+                    ))
+                }
             }
             MessageType::C2SMatchCancel => Ok(Message::C2SMatchCancel),
             MessageType::C2SForfeit => Ok(Message::C2SForfeit),
             MessageType::C2SOrS2CAction => {
                 let action_type = try_i64_to_enum(read_i64_le(&mut bytes))?;
                 let color = try_i64_to_enum(read_i64_le(&mut bytes))?;
-                let message_id = read_u64_le(&mut bytes);
+                let message_id = read_i64_le(&mut bytes);
                 let src_l = read_i64_le(&mut bytes);
                 let src_t = read_i64_le(&mut bytes);
                 let src_board_color = try_i64_to_enum(read_i64_le(&mut bytes))?;
@@ -519,6 +585,7 @@ impl Message {
     }
 }
 
+#[derive(Debug)]
 pub struct MessageIO {
     framed: Framed<TcpStream, LengthDelimitedCodec>,
 }
@@ -585,13 +652,13 @@ pub fn try_i64_to_enum<T: num::FromPrimitive>(v: i64) -> Result<T> {
     }
 }
 
-pub fn generate_random_passcode_internal() -> i64 {
+pub fn generate_random_passcode_internal() -> Passcode {
     rand::thread_rng().gen_range(0..=2985983) // kkkkkk = 2985983
 }
 
 pub async fn generate_random_passcode_internal_with_exceptions(
-    matches: &Mutex<HashMap<i64, InternalMatch>>,
-) -> i64 {
+    matches: &Mutex<HashMap<Passcode, MatchSettings>>,
+) -> Passcode {
     loop {
         let v = generate_random_passcode_internal();
         if !matches.lock().await.contains_key(&v) {

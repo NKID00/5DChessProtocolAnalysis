@@ -17,6 +17,7 @@ tracing = "^0.1.35"
 tracing-subscriber = "^0.3.11"
 byteorder = "^1.4.3"
 rand = "^0.8.5"
+indexmap = "^1.9.1"
 
 [build-dependencies]
 vergen = "^7.2.1"

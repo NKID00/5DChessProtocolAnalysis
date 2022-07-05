@@ -1,175 +1,271 @@
-use std::collections::{HashMap, VecDeque};
+use indexmap::IndexMap;
+use std::collections::HashMap;
 use std::io::Result;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::{net::TcpStream, select};
-use tracing::error;
+use tracing::{error, info};
 
 use crate::datatype::*;
 
 #[derive(Debug)]
 pub struct ServerState {
-    match_id: Mutex<u64>,
-    message_id: Mutex<u64>,
-    matches: Mutex<HashMap<i64, InternalMatch>>,
-    public_matches: Mutex<VecDeque<PublicMatch>>,
-    server_history_matches: Mutex<VecDeque<ServerHistoryMatch>>,
+    pub match_id: Mutex<u64>,
+    pub message_id: Mutex<u64>,
+    pub matches: Mutex<HashMap<Passcode, MatchSettings>>,
+    pub public_matches: Mutex<HashMap<Passcode, MatchSettingsWithoutVisibility>>,
+    pub server_history_matches: Mutex<IndexMap<i64 /* Match ID */, ServerHistoryMatch>>,
 }
 
 impl ServerState {
-    pub fn new() -> ServerState {
+    pub fn new() -> Self {
         ServerState {
             match_id: Mutex::new(0),
             message_id: Mutex::new(0),
-            matches: Mutex::new(HashMap::<i64, InternalMatch>::new()),
-            public_matches: Mutex::new(VecDeque::<PublicMatch>::new()),
-            server_history_matches: Mutex::new(VecDeque::<ServerHistoryMatch>::new()),
+            matches: Mutex::new(HashMap::<Passcode, MatchSettings>::new()),
+            public_matches: Mutex::new(HashMap::<Passcode, MatchSettingsWithoutVisibility>::new()),
+            server_history_matches: Mutex::new(IndexMap::<i64, ServerHistoryMatch>::new()),
         }
     }
 }
 
 /* state machine of one connection:
-
-Idle -> PublicMatchWaiting -> Playing -> Idle
-Idle -> PrivateMatchWaiting -> Playing -> Idle
+Idle -> PublicWaiting -> Playing -> Idle
+Idle -> PrivateWaiting -> Playing -> Idle
 */
-pub enum ConnectionState {
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub enum ConnectionStateEnum {
     Idle,
-    PublicMatchWaiting,
-    PrivateMatchWaiting,
+    Waiting,
     Playing,
 }
 
-pub async fn handle_connection(
-    server_state: Arc<ServerState>,
-    stream: TcpStream,
-    addr: SocketAddr,
-) {
-    let mut state = ConnectionState::Idle;
-    let mut messages = MessageIO::new(stream);
-    match handle_connection_main_loop(&server_state, &mut state, &addr, &mut messages).await {
+#[derive(Debug)]
+pub struct ConnectionState {
+    pub state: ConnectionStateEnum,
+    pub ss: Arc<ServerState>,
+    pub addr: SocketAddr,
+    pub addr_peer: Option<SocketAddr>,
+    pub io: MessageIO,
+    pub io_peer: Option<MessageIO>,
+    pub m: Option<MatchSettings>, // match is reserved as a key word
+}
+
+impl ConnectionState {
+    pub fn new(ss: Arc<ServerState>, addr: SocketAddr, stream: TcpStream) -> Self {
+        ConnectionState {
+            state: ConnectionStateEnum::Idle,
+            ss,
+            addr,
+            addr_peer: None,
+            io: MessageIO::new(stream),
+            io_peer: None,
+            m: None,
+        }
+    }
+
+    pub fn waiting(&mut self, m: MatchSettings) {
+        self.state = ConnectionStateEnum::Waiting;
+        self.m = Some(m);
+    }
+
+    pub fn playing(&mut self, cs_peer: ConnectionState) {
+        self.state = ConnectionStateEnum::Playing;
+        self.addr_peer = Some(cs_peer.addr);
+        self.io_peer = Some(cs_peer.io);
+    }
+}
+
+pub async fn handle_connection(ss: Arc<ServerState>, stream: TcpStream, addr: SocketAddr) {
+    let mut cs = ConnectionState::new(ss, addr, stream);
+    match handle_connection_main_loop(&mut cs).await {
         Ok(()) => {}
-        Err(e) => {
-            error!("[{}:{}] {}", addr.ip(), addr.port(), e);
-        }
-    }
-    // TODO: clean resources, remove match from public_matches, etc.
-    error!("[{}:{}] Disconnected.", addr.ip(), addr.port());
-}
-
-pub async fn handle_connection_main_loop(
-    server_state: &Arc<ServerState>,
-    state: &mut ConnectionState,
-    addr: &SocketAddr,
-    messages: &mut MessageIO,
-) -> Result<()> {
-    loop {
-        match messages.get().await {
-            Ok(message) => {
-                match state {
-                    ConnectionState::Idle => {
-                        handle_message_idle(server_state, state, addr, messages, message).await?
-                    }
-                    ConnectionState::PublicMatchWaiting => {}
-                    ConnectionState::PrivateMatchWaiting => {}
-                    ConnectionState::Playing => {}
-                };
-                messages.flush().await?;
-            }
-            Err(e) => return Err(e),
-        }
-    }
-}
-
-async fn handle_message_idle(
-    server_state: &Arc<ServerState>,
-    state: &mut ConnectionState,
-    addr: &SocketAddr,
-    messages: &mut MessageIO,
-    message: Message,
-) -> Result<()> {
-    match message {
-        Message::C2SGreet(_body) => {
-            messages.put(Message::S2CGreet).await?;
-        }
-        Message::C2SMatchCreateOrJoin(body) => {
-            if body.passcode >= 0 {
-                // join match
-                let matches_map = server_state.matches.lock().await;
-                match matches_map.get(&body.passcode) {
-                    Some(m) => {
-                        // match found
-                        messages
-                            .put(Message::S2CMatchCreateOrJoinResult(
-                                S2CMatchCreateOrJoinResultBody::Success(
-                                    S2CMatchCreateOrJoinResultSuccessBody {
-                                        color: m.color,
-                                        clock: m.clock,
-                                        variant: m.variant,
-                                        visibility: m.visibility,
-                                        passcode: m.passcode,
-                                    },
-                                ),
-                            ))
-                            .await?;
-                    }
-                    None => {
-                        // match not found
-                        messages
-                            .put(Message::S2CMatchCreateOrJoinResult(
-                                S2CMatchCreateOrJoinResultBody::Failed,
-                            ))
-                            .await?;
-                    }
+        Err(e) => match cs.state {
+            ConnectionStateEnum::Playing => match cs.addr_peer {
+                Some(ref addr_peer) => {
+                    error!(
+                        "[{}:{}, {}:{}] {}",
+                        cs.addr.ip(),
+                        cs.addr.port(),
+                        addr_peer.ip(),
+                        addr_peer.port(),
+                        e
+                    );
                 }
-            } else {
-                // create match
-                let passcode =
-                    generate_random_passcode_internal_with_exceptions(&server_state.matches).await;
-                server_state.matches.lock().await.insert(
-                    passcode,
-                    InternalMatch {
-                        color: body.color,
-                        clock: body.clock,
-                        variant: body.variant,
-                        visibility: body.visibility,
-                        passcode,
-                    },
-                );
-                match body.visibility {
-                    Visibility::Public => {
-                        server_state
+                None => unreachable!(),
+            },
+            _ => {
+                error!("[{}:{}] {}", cs.addr.ip(), cs.addr.port(), e);
+            }
+        },
+    }
+    // clean resources, remove match from public_matches, etc.
+    match cs.state {
+        ConnectionStateEnum::Idle => {
+            info!("[{}:{}] Disconnected.", addr.ip(), addr.port());
+        }
+        ConnectionStateEnum::Waiting => {
+            match cs.m {
+                Some(m) => {
+                    if m.visibility == Visibility::Public {
+                        cs.ss.public_matches.lock().await.remove(&m.passcode);
+                    }
+                    cs.ss.matches.lock().await.remove(&m.passcode);
+                }
+                None => unreachable!(),
+            }
+            error!("[{}:{}] Disconnected", cs.addr.ip(), cs.addr.port());
+        }
+        ConnectionStateEnum::Playing => {
+            let match_id = match cs.m {
+                Some(m) => m.match_id,
+                None => unreachable!(),
+            };
+            {
+                let mut server_history_matches = cs.ss.server_history_matches.lock().await;
+                match server_history_matches.get_mut(&match_id) {
+                    Some(v) => {
+                        v.status = HistoryMatchStatus::Completed;
+                    }
+                    None => {}
+                }
+            }
+            match cs.addr_peer {
+                Some(ref addr_peer) => {
+                    info!(
+                        "[{}:{}, {}:{}] Disconnected",
+                        cs.addr.ip(),
+                        cs.addr.port(),
+                        addr_peer.ip(),
+                        addr_peer.port()
+                    );
+                }
+                None => unreachable!(),
+            }
+        }
+    }
+}
+
+async fn handle_connection_main_loop(cs: &mut ConnectionState) -> Result<()> {
+    loop {
+        match cs.state {
+            ConnectionStateEnum::Idle => match cs.io.get().await? {
+                Message::C2SGreet(_body) => {
+                    cs.io.put(Message::S2CGreet).await?;
+                }
+                Message::C2SMatchCreateOrJoin(C2SMatchCreateOrJoinBody::Create(m)) => {
+                    // create match
+                    let passcode =
+                        generate_random_passcode_internal_with_exceptions(&cs.ss.matches).await;
+                    cs.ss.matches.lock().await.insert(passcode, m.clone());
+                    if m.visibility == Visibility::Public {
+                        // add to public match list
+                        cs.ss
                             .public_matches
                             .lock()
                             .await
-                            .push_back(PublicMatch {
-                                color: body.color,
-                                clock: body.clock,
-                                variant: body.variant,
-                                passcode,
-                            });
-                        *state = ConnectionState::PublicMatchWaiting;
+                            .insert(m.passcode, m.clone().into());
+                        // TODO: public match max count
                     }
-                    Visibility::Private => {
-                        *state = ConnectionState::PrivateMatchWaiting;
+                    cs.waiting(m);
+                }
+                Message::C2SMatchCreateOrJoin(C2SMatchCreateOrJoinBody::Join(passcode)) => {
+                    // join match
+                    match cs.ss.matches.lock().await.get(&passcode) {
+                        Some(m) => {
+                            // match found
+                            if m.visibility == Visibility::Public {
+                                cs.ss.public_matches.lock().await.remove(&passcode);
+                            }
+                            cs.io
+                                .put(Message::S2CMatchCreateOrJoinResult(
+                                    S2CMatchCreateOrJoinResultBody::Success(m.clone()),
+                                ))
+                                .await?;
+                        }
+                        None => {
+                            // match not found
+                            cs.io
+                                .put(Message::S2CMatchCreateOrJoinResult(
+                                    S2CMatchCreateOrJoinResultBody::Failed,
+                                ))
+                                .await?;
+                        }
                     }
                 }
+                Message::C2SMatchCancel => {
+                    cs.io
+                        .put(Message::S2CMatchCancelResult(
+                            S2CMatchCancelResultBody::Failed,
+                        ))
+                        .await?;
+                }
+                Message::C2SMatchListRequest => {
+                    let mut public_matches_count = cs.ss.public_matches.lock().await.len();
+                    if public_matches_count > 13 {
+                        public_matches_count = 13;
+                    }
+                    let server_history_matches_count =
+                        cs.ss.server_history_matches.lock().await.len();
+                    let mut body = S2CMatchListNonhostBody {
+                        public_matches: [MatchSettingsWithoutVisibility {
+                            color: OptionalColorWithRandom::None,
+                            clock: OptionalClock::None,
+                            variant: 0,
+                            passcode: 0,
+                            match_id: -1,
+                        }; 13],
+                        public_matches_count,
+                        server_history_matches: [S2CMatchListServerHistoryMatch {
+                            status: HistoryMatchStatus::Completed,
+                            clock: OptionalClock::None,
+                            variant: 0,
+                            visibility: Visibility::Public,
+                            seconds_passed: 0,
+                        }; 13],
+                        server_history_matches_count,
+                    };
+                    for (i, (_, m)) in cs.ss.public_matches.lock().await.iter().enumerate() {
+                        if i >= 13 {
+                            break;
+                        }
+                        body.public_matches[i] = m.clone();
+                    }
+                    for (i, (_, m)) in cs.ss.server_history_matches.lock().await.iter().enumerate()
+                    {
+                        body.server_history_matches[i] = m.clone().into();
+                    }
+                    cs.io
+                        .put(Message::S2CMatchList(S2CMatchListBody::Nonhost(body)))
+                        .await?;
+                }
+                other => {
+                    return err_invalid_data!(
+                        "Invalid message type {:?} at state Idle.",
+                        other.message_type()
+                    );
+                }
+            },
+
+            ConnectionStateEnum::Waiting => {
+                let message = cs.io.get().await?;
+                todo!()
             }
-        }
-        Message::C2SMatchCancel => {
-            messages
-                .put(Message::S2CMatchCancelResult(
-                    S2CMatchCancelResultBody::Failed,
-                ))
-                .await?;
-        }
-        Message::C2SMatchListRequest => {
-            //messages.feed().await;
-        }
-        _ => {
-            return err_invalid_data!("Invalid message type {:?} at state Idle.", message);
+
+            ConnectionStateEnum::Playing => select! {
+                result = cs.io.get() => {
+                    let message = result?;
+                    todo!()
+                },
+                result = match cs.io_peer {
+                    Some(ref mut io) => io.get(),
+                    None => unreachable!(),
+                } => {
+                    let message = result?;
+                    todo!()
+                }
+            },
         }
     }
-    Ok(())
 }
