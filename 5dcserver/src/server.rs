@@ -216,9 +216,9 @@ async fn handle_connection_idle(
         Message::C2SGreet(_body) => {
             cs.io.put(Message::S2CGreet).await?;
         }
-        Message::C2SMatchCreateOrJoin(C2SMatchCreateOrJoinBody::Create(m)) => {
+        Message::C2SMatchCreateOrJoin(C2SMatchCreateOrJoinBody::Create(mut m)) => {
             // create match
-            let passcode = generate_random_passcode_internal_with_exceptions(&cs.ss.matches).await;
+            m.passcode = generate_random_passcode_internal_with_exceptions(&cs.ss.matches).await;
             let (tx, rx_peer) = broadcast::channel(8);
             let (tx_peer, rx) = broadcast::channel(8);
             // store tx_peer in rx_peer
@@ -226,7 +226,7 @@ async fn handle_connection_idle(
             cs.tx = Some(tx);
             cs.rx = Some(rx);
             // add to match list
-            cs.ss.matches.lock().await.insert(passcode, rx_peer);
+            cs.ss.matches.lock().await.insert(m.passcode, rx_peer);
             if m.visibility == Visibility::Public {
                 // add to public match list
                 cs.ss
