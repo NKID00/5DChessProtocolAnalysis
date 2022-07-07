@@ -399,7 +399,8 @@ async fn handle_connection_playing(
             cs.m = None;
             cs.state = ConnectionStateEnum::Idle;
         }
-        Message::C2SOrS2CAction(body) => {
+        Message::C2SOrS2CAction(mut body) => {
+            body.message_id = cs.ss.message_id.fetch_add(1, Ordering::Relaxed);
             peer_send(cs, Message::InternalAction(body))?;
             cs.io.put(Message::C2SOrS2CAction(body)).await?;
         }
