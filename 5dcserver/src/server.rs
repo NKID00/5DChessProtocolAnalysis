@@ -370,6 +370,7 @@ async fn handle_connection_waiting(
                 message_id: cs.ss.message_id.fetch_add(1, Ordering::Relaxed),
             };
             cs.state = ConnectionStateEnum::Playing;
+            // FIXME: determine variant
             body.m.color = body.m.color.determined();
             peer_send(cs, Message::InternalMatchStart(body))?;
             body.m.color = body.m.color.reversed();

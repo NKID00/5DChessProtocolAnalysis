@@ -525,8 +525,8 @@ impl Message {
             MessageType::C2SMatchCreateOrJoin => {
                 let color = read_i64_le(&mut bytes);
                 let clock = read_i64_le(&mut bytes);
-                let visibility = read_i64_le(&mut bytes);
                 let variant = read_i64_le(&mut bytes);
+                let visibility = read_i64_le(&mut bytes);
                 let passcode = read_i64_le(&mut bytes);
                 if passcode < 0 {
                     // create match
