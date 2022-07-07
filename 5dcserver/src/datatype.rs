@@ -261,11 +261,11 @@ pub enum Message {
     C2SMatchListRequest,
     S2CMatchList(S2CMatchListBody),
 
-    S2SInitialize(broadcast::Sender<Message>),
-    S2SJoin,
-    S2SMatchStart(S2CMatchStartBody),
-    S2SForfeit,
-    S2SAction(C2SOrS2CActionBody),
+    InternalInitialize(broadcast::Sender<Message>),
+    InternalJoin,
+    InternalMatchStart(S2CMatchStartBody),
+    InternalForfeit,
+    InternalAction(C2SOrS2CActionBody),
 }
 #[derive(Debug, Copy, Clone)]
 pub struct C2SGreetBody {
@@ -416,7 +416,7 @@ impl Message {
                 write_i64_le(&mut bytes, body.m.clock as i64);
                 write_i64_le(&mut bytes, body.m.variant);
                 write_i64_le(&mut bytes, body.match_id);
-                write_i64_le(&mut bytes, body.m.color as i64);
+                write_i64_le(&mut bytes, TryInto::<Color>::try_into(body.m.color)? as i64);
                 write_i64_le(&mut bytes, body.message_id);
             }
             Message::S2COpponentLeft => {

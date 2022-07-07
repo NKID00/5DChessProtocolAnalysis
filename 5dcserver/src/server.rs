@@ -8,7 +8,7 @@ use std::sync::Arc;
 use tokio::net::TcpStream;
 use tokio::select;
 use tokio::sync::{broadcast, watch, Mutex};
-use tracing::{error, info};
+use tracing::{error, info, trace};
 
 use crate::datatype::*;
 
@@ -92,9 +92,13 @@ pub async fn handle_connection(
         Err(e) => match e.downcast::<std::io::Error>() {
             Ok(e) if e.kind() == ErrorKind::ConnectionAborted => {}
             Ok(e) => trace_error(&mut cs, e),
-            Err(e) => trace_error(&mut cs, e),
+            Err(e) => match e.downcast::<broadcast::error::RecvError>() {
+                Ok(e) if e.as_ref() == &broadcast::error::RecvError::Closed => {}
+                Ok(e) => trace_error(&mut cs, e),
+                Err(e) => trace_error(&mut cs, e),
+            },
         },
-    }
+    };
 
     // clean resources, remove match from public match list, etc.
     match cs.state {
@@ -145,6 +149,7 @@ async fn handle_connection_main_loop(cs: &mut ConnectionState) -> Result<(), Box
 }
 
 fn peer_send(cs: &mut ConnectionState, msg: Message) -> Result<(), Box<dyn Error>> {
+    trace!("Internal {:?}", msg);
     cs.tx.as_mut().unwrap().send(msg)?;
     Ok(())
 }
@@ -232,10 +237,10 @@ async fn handle_connection_idle(
             m.passcode = generate_random_passcode_internal_with_exceptions(&cs.ss.matches).await;
             let (tx, rx_peer) = broadcast::channel(8);
             let (tx_peer, rx) = broadcast::channel(8);
-            // store tx_peer in rx_peer
-            tx.send(Message::S2SInitialize(tx_peer))?;
             cs.tx = Some(tx);
             cs.rx = Some(rx);
+            // store tx_peer in rx_peer
+            peer_send(cs, Message::InternalInitialize(tx_peer))?;
             // add to match list
             cs.ss.matches.lock().await.insert(m.passcode, rx_peer);
             if m.visibility == Visibility::Public {
@@ -258,7 +263,8 @@ async fn handle_connection_idle(
         Message::C2SMatchCreateOrJoin(C2SMatchCreateOrJoinBody::Join(passcode)) => {
             // join match
             // remove from match list
-            match cs.ss.matches.lock().await.remove(&passcode) {
+            let rx = cs.ss.matches.lock().await.remove(&passcode);
+            match rx {
                 Some(mut rx) => {
                     // match found
                     // remove from public match list
@@ -276,16 +282,18 @@ async fn handle_connection_idle(
                     };
                     // receive sender from peer
                     let tx = match rx.recv().await? {
-                        Message::S2SInitialize(tx) => tx,
+                        Message::InternalInitialize(tx) => tx,
                         _ => unreachable!(),
                     };
+                    cs.tx = Some(tx);
                     // notify peer
-                    tx.send(Message::S2SJoin)?;
+                    peer_send(cs, Message::InternalJoin)?;
                     // receive match information from peer
                     let body = match rx.recv().await? {
-                        Message::S2SMatchStart(body) => body,
+                        Message::InternalMatchStart(body) => body,
                         _ => unreachable!(),
                     };
+                    cs.rx = Some(rx);
                     let mut server_history_matches = cs.ss.server_history_matches.lock().await;
                     server_history_matches.insert(
                         body.match_id,
@@ -294,8 +302,7 @@ async fn handle_connection_idle(
                     if server_history_matches.len() > 13 {
                         server_history_matches.shift_remove_index(0);
                     }
-                    cs.tx = Some(tx);
-                    cs.rx = Some(rx);
+                    cs.m = Some(MatchSettings::new(body.m, visibility));
                     cs.state = ConnectionStateEnum::Playing;
                     cs.io
                         .put(Message::S2CMatchCreateOrJoinResult(
@@ -307,8 +314,8 @@ async fn handle_connection_idle(
                     cs.io
                         .put(Message::S2CMatchStart(S2CMatchStartBody {
                             m: body.m,
-                            match_id: cs.ss.match_id.fetch_add(1, Ordering::Relaxed),
-                            message_id: cs.ss.message_id.fetch_add(1, Ordering::Relaxed),
+                            match_id: body.match_id,
+                            message_id: body.message_id,
                         }))
                         .await?;
                 }
@@ -358,7 +365,7 @@ async fn handle_connection_waiting(
                 .await?;
         }
         Message::C2SMatchListRequest => handle_match_list_request(cs, cs.m).await?,
-        Message::S2SJoin => {
+        Message::InternalJoin => {
             let mut body = S2CMatchStartBody {
                 m: cs.m.unwrap().into(),
                 match_id: cs.ss.match_id.fetch_add(1, Ordering::Relaxed),
@@ -366,7 +373,7 @@ async fn handle_connection_waiting(
             };
             cs.state = ConnectionStateEnum::Playing;
             body.m.color = body.m.color.determined();
-            cs.tx.as_mut().unwrap().send(Message::S2SMatchStart(body))?;
+            peer_send(cs, Message::InternalMatchStart(body))?;
             body.m.color = body.m.color.reversed();
             cs.io.put(Message::S2CMatchStart(body)).await?;
         }
@@ -384,7 +391,7 @@ async fn handle_connection_playing(
 ) -> Result<(), Box<dyn Error>> {
     match msg {
         Message::C2SForfeit => {
-            peer_send(cs, Message::S2SForfeit)?;
+            peer_send(cs, Message::InternalForfeit)?;
             let match_id = cs.m.unwrap().match_id;
             let mut server_history_matches = cs.ss.server_history_matches.lock().await;
             match server_history_matches.get_mut(&match_id) {
@@ -399,10 +406,11 @@ async fn handle_connection_playing(
             cs.state = ConnectionStateEnum::Idle;
         }
         Message::C2SOrS2CAction(body) => {
-            peer_send(cs, Message::S2SAction(body))?;
+            peer_send(cs, Message::InternalAction(body))?;
             cs.io.put(Message::C2SOrS2CAction(body)).await?;
         }
-        Message::S2SForfeit => {
+        Message::C2SMatchListRequest => handle_match_list_request(cs, cs.m).await?,
+        Message::InternalForfeit => {
             let match_id = cs.m.unwrap().match_id;
             let mut server_history_matches = cs.ss.server_history_matches.lock().await;
             match server_history_matches.get_mut(&match_id) {
