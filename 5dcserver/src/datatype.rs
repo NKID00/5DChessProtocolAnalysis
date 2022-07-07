@@ -522,13 +522,16 @@ impl Message {
                 Ok(Message::C2SGreet(C2SGreetBody { version1, version2 }))
             }
             MessageType::C2SMatchCreateOrJoin => {
-                let color = try_i64_to_enum(read_i64_le(&mut bytes))?;
-                let clock = try_i64_to_enum(read_i64_le(&mut bytes))?;
+                let color = read_i64_le(&mut bytes);
+                let clock = read_i64_le(&mut bytes);
+                let visibility = read_i64_le(&mut bytes);
                 let variant = read_i64_le(&mut bytes);
-                let visibility = try_i64_to_enum(read_i64_le(&mut bytes))?;
                 let passcode = read_i64_le(&mut bytes);
                 if passcode < 0 {
                     // create match
+                    let color = try_i64_to_enum(color)?;
+                    let clock = try_i64_to_enum(clock)?;
+                    let visibility = try_i64_to_enum(visibility)?;
                     Ok(Message::C2SMatchCreateOrJoin(
                         C2SMatchCreateOrJoinBody::Create(MatchSettings {
                             color,
