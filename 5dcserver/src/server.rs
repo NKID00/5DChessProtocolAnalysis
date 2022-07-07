@@ -149,7 +149,10 @@ fn peer_send(cs: &mut ConnectionState, msg: Message) -> Result<(), Box<dyn Error
     Ok(())
 }
 
-async fn handle_match_list_request(cs: &mut ConnectionState) -> Result<(), Box<dyn Error>> {
+async fn handle_match_list_request(
+    cs: &mut ConnectionState,
+    m: Option<MatchSettings>,
+) -> Result<(), Box<dyn Error>> {
     let mut public_matches_count = cs.ss.public_matches.lock().await.len();
     if public_matches_count > 13 {
         public_matches_count = 13;
@@ -182,9 +185,26 @@ async fn handle_match_list_request(cs: &mut ConnectionState) -> Result<(), Box<d
     for (i, (_, m)) in cs.ss.server_history_matches.lock().await.iter().enumerate() {
         body.server_history_matches[server_history_matches_count - i - 1] = m.clone().into();
     }
-    cs.io
-        .put(Message::S2CMatchList(S2CMatchListBody::Nonhost(body)))
-        .await?;
+    match m {
+        Some(m) => {
+            cs.io
+                .put(Message::S2CMatchList(S2CMatchListBody::Host(
+                    S2CMatchListHostBody {
+                        color: m.color,
+                        clock: m.clock,
+                        variant: m.variant,
+                        passcode: m.passcode,
+                        body,
+                    },
+                )))
+                .await?;
+        }
+        None => {
+            cs.io
+                .put(Message::S2CMatchList(S2CMatchListBody::Nonhost(body)))
+                .await?;
+        }
+    }
     Ok(())
 }
 
@@ -298,7 +318,7 @@ async fn handle_connection_idle(
                 ))
                 .await?;
         }
-        Message::C2SMatchListRequest => handle_match_list_request(cs).await?,
+        Message::C2SMatchListRequest => handle_match_list_request(cs, None).await?,
         other => err_invalid_data!(
             "Invalid message type {:?} at state Idle.",
             other.message_type()
@@ -326,6 +346,7 @@ async fn handle_connection_waiting(
                 ))
                 .await?;
         }
+        Message::C2SMatchListRequest => handle_match_list_request(cs, cs.m).await?,
         Message::S2SJoin => {
             let body = S2CMatchStartBody {
                 m: cs.m.unwrap().into(),

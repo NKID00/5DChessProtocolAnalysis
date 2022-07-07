@@ -314,14 +314,11 @@ pub enum S2CMatchListBody {
 }
 #[derive(Debug, Copy, Clone)]
 pub struct S2CMatchListHostBody {
-    pub color: OptionalClock,
+    pub color: OptionalColorWithRandom,
     pub clock: OptionalClock,
     pub variant: Variant,
     pub passcode: Passcode,
-    pub public_matches: [MatchSettingsWithoutVisibility; 13],
-    pub public_matches_count: usize,
-    pub server_history_matches: [S2CMatchListServerHistoryMatch; 13],
-    pub server_history_matches_count: usize,
+    pub body: S2CMatchListNonhostBody,
 }
 #[derive(Debug, Copy, Clone)]
 pub struct S2CMatchListNonhostBody {
@@ -438,72 +435,54 @@ impl Message {
                 write_i64_le(&mut bytes, body.dst_y);
                 write_i64_le(&mut bytes, body.dst_x);
             }
-            Message::S2CMatchList(body) => match body {
-                S2CMatchListBody::Host(body) => {
-                    write_i64_le(&mut bytes, 1); // unknown
-                    write_i64_le(&mut bytes, body.color as i64);
-                    write_i64_le(&mut bytes, body.clock as i64);
-                    write_i64_le(&mut bytes, body.variant as i64);
-                    write_i64_le(&mut bytes, body.passcode);
-                    write_i64_le(&mut bytes, 1); // is_host
-                    for i in 0..body.public_matches_count {
-                        write_i64_le(&mut bytes, body.public_matches[i].color as i64);
-                        write_i64_le(&mut bytes, body.public_matches[i].clock as i64);
-                        write_i64_le(&mut bytes, body.public_matches[i].variant);
-                        write_i64_le(&mut bytes, body.public_matches[i].passcode);
-                    }
-                    for _ in body.public_matches_count..13 {
-                        for _ in 0..4 {
-                            write_i64_le(&mut bytes, 0);
-                        }
-                    }
-                    write_u64_le(&mut bytes, body.public_matches_count as u64);
-                    for i in 0..body.server_history_matches_count {
-                        write_i64_le(&mut bytes, body.server_history_matches[i].status as i64);
-                        write_i64_le(&mut bytes, body.server_history_matches[i].clock as i64);
-                        write_i64_le(&mut bytes, body.server_history_matches[i].variant);
-                        write_i64_le(&mut bytes, body.server_history_matches[i].visibility as i64);
-                        write_u64_le(&mut bytes, body.server_history_matches[i].seconds_passed);
-                    }
-                    for _ in body.server_history_matches_count..13 {
+            Message::S2CMatchList(body) => {
+                let body = match body {
+                    S2CMatchListBody::Host(body) => {
+                        write_i64_le(&mut bytes, 1); // unknown
+                        write_i64_le(&mut bytes, body.color as i64);
+                        write_i64_le(&mut bytes, body.clock as i64);
+                        write_i64_le(&mut bytes, body.variant as i64);
+                        write_i64_le(&mut bytes, body.passcode);
+                        write_i64_le(&mut bytes, 1); // is_host
+                        &body.body
+                    },
+                    S2CMatchListBody::Nonhost(body) => {
+                        write_i64_le(&mut bytes, 1); // unknown
                         for _ in 0..5 {
                             write_i64_le(&mut bytes, 0);
                         }
+                        body
                     }
-                    write_u64_le(&mut bytes, body.server_history_matches_count as u64);
+                };
+                for i in 0..body.public_matches_count {
+                    write_i64_le(&mut bytes, body.public_matches[i].color as i64);
+                    write_i64_le(&mut bytes, body.public_matches[i].clock as i64);
+                    write_i64_le(&mut bytes, body.public_matches[i].variant);
+                    write_i64_le(&mut bytes, body.public_matches[i].passcode);
                 }
-                S2CMatchListBody::Nonhost(body) => {
-                    write_i64_le(&mut bytes, 1); // unknown
+                for _ in body.public_matches_count..13 {
+                    for _ in 0..4 {
+                        write_i64_le(&mut bytes, 0);
+                    }
+                }
+                write_u64_le(&mut bytes, body.public_matches_count as u64);
+                for i in 0..body.server_history_matches_count {
+                    write_i64_le(&mut bytes, body.server_history_matches[i].status as i64);
+                    write_i64_le(&mut bytes, body.server_history_matches[i].clock as i64);
+                    write_i64_le(&mut bytes, body.server_history_matches[i].variant);
+                    write_i64_le(
+                        &mut bytes,
+                        body.server_history_matches[i].visibility as i64,
+                    );
+                    write_u64_le(&mut bytes, body.server_history_matches[i].seconds_passed);
+                }
+                for _ in body.server_history_matches_count..13 {
                     for _ in 0..5 {
                         write_i64_le(&mut bytes, 0);
                     }
-                    for i in 0..body.public_matches_count {
-                        write_i64_le(&mut bytes, body.public_matches[i].color as i64);
-                        write_i64_le(&mut bytes, body.public_matches[i].clock as i64);
-                        write_i64_le(&mut bytes, body.public_matches[i].variant);
-                        write_i64_le(&mut bytes, body.public_matches[i].passcode);
-                    }
-                    for _ in body.public_matches_count..13 {
-                        for _ in 0..4 {
-                            write_i64_le(&mut bytes, 0);
-                        }
-                    }
-                    write_u64_le(&mut bytes, body.public_matches_count as u64);
-                    for i in 0..body.server_history_matches_count {
-                        write_i64_le(&mut bytes, body.server_history_matches[i].status as i64);
-                        write_i64_le(&mut bytes, body.server_history_matches[i].clock as i64);
-                        write_i64_le(&mut bytes, body.server_history_matches[i].variant);
-                        write_i64_le(&mut bytes, body.server_history_matches[i].visibility as i64);
-                        write_u64_le(&mut bytes, body.server_history_matches[i].seconds_passed);
-                    }
-                    for _ in body.server_history_matches_count..13 {
-                        for _ in 0..5 {
-                            write_i64_le(&mut bytes, 0);
-                        }
-                    }
-                    write_u64_le(&mut bytes, body.server_history_matches_count as u64);
                 }
-            },
+                write_u64_le(&mut bytes, body.server_history_matches_count as u64);
+            }
             _ => {
                 return err_invalid_data!(
                     "Message type {:?} shouldn't be packed.",
