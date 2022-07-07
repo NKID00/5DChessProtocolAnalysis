@@ -153,10 +153,7 @@ async fn handle_match_list_request(
     cs: &mut ConnectionState,
     m: Option<MatchSettings>,
 ) -> Result<(), Box<dyn Error>> {
-    let mut public_matches_count = cs.ss.public_matches.lock().await.len();
-    if public_matches_count > 13 {
-        public_matches_count = 13;
-    }
+    let mut public_matches_count = 0;
     let server_history_matches_count = cs.ss.server_history_matches.lock().await.len();
     let mut body = S2CMatchListNonhostBody {
         public_matches: [MatchSettingsWithoutVisibility {
@@ -176,14 +173,28 @@ async fn handle_match_list_request(
         }; 13],
         server_history_matches_count,
     };
-    for (i, (_, m)) in cs.ss.public_matches.lock().await.iter().enumerate() {
-        if i >= 13 {
+    let mut public_match_index_max = 13;
+    for (i, (_, public_match)) in cs.ss.public_matches.lock().await.iter().enumerate() {
+        match m {
+            Some(m) if m.match_id == public_match.match_id => {
+                // skip host match
+                public_match_index_max = 14;
+                continue;
+            }
+            _ => {}
+        }
+        if i >= public_match_index_max {
             break;
         }
-        body.public_matches[i] = m.clone();
+        body.public_matches[i] = public_match.clone();
+        public_matches_count += 1;
     }
-    for (i, (_, m)) in cs.ss.server_history_matches.lock().await.iter().enumerate() {
-        body.server_history_matches[server_history_matches_count - i - 1] = m.clone().into();
+    body.public_matches_count = public_matches_count;
+    for (i, (_, server_history_match)) in
+        cs.ss.server_history_matches.lock().await.iter().enumerate()
+    {
+        body.server_history_matches[server_history_matches_count - i - 1] =
+            server_history_match.clone().into();
     }
     match m {
         Some(m) => {
