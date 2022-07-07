@@ -9,6 +9,7 @@ use tokio::net::TcpStream;
 use tokio::sync::{broadcast, Mutex};
 use tokio::time::Instant;
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
+use tracing::trace;
 
 pub const MESSAGE_LENGTH_MAX: usize = 4096; // >= 1008, prevent attacks
 
@@ -605,15 +606,22 @@ impl MessageIO {
 
     pub async fn get(&mut self) -> Result<Message> {
         match self.framed.next().await {
-            Some(Ok(message)) => Message::unpack(message),
+            Some(Ok(msg)) => match Message::unpack(msg) {
+                Ok(msg) => {
+                    trace!("Get {:?}", msg);
+                    Ok(msg)
+                }
+                Err(e) => Err(e),
+            },
             Some(Err(e)) => Err(e),
             None => err_disconnected!(),
         }
     }
 
-    pub async fn put(&mut self, message: Message) -> Result<()> {
-        match message.pack() {
-            Ok(message) => self.framed.feed(message).await,
+    pub async fn put(&mut self, msg: Message) -> Result<()> {
+        trace!("Put {:?}", msg);
+        match msg.pack() {
+            Ok(msg) => self.framed.feed(msg).await,
             Err(e) => Err(e),
         }
     }
