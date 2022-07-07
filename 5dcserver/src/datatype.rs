@@ -127,7 +127,8 @@ enum_from_primitive! {
         Move = 1,
         UndoMove = 2,
         SubmitMoves = 3,
-
+        ResetPuzzle = 4, // TODO: ban this
+        DisplayCheckReason = 5,
         Header = 6
     }
 }
@@ -445,7 +446,7 @@ impl Message {
                         write_i64_le(&mut bytes, body.passcode);
                         write_i64_le(&mut bytes, 1); // is_host
                         &body.body
-                    },
+                    }
                     S2CMatchListBody::Nonhost(body) => {
                         write_i64_le(&mut bytes, 1); // unknown
                         for _ in 0..5 {
@@ -470,10 +471,7 @@ impl Message {
                     write_i64_le(&mut bytes, body.server_history_matches[i].status as i64);
                     write_i64_le(&mut bytes, body.server_history_matches[i].clock as i64);
                     write_i64_le(&mut bytes, body.server_history_matches[i].variant);
-                    write_i64_le(
-                        &mut bytes,
-                        body.server_history_matches[i].visibility as i64,
-                    );
+                    write_i64_le(&mut bytes, body.server_history_matches[i].visibility as i64);
                     write_u64_le(&mut bytes, body.server_history_matches[i].seconds_passed);
                 }
                 for _ in body.server_history_matches_count..13 {
