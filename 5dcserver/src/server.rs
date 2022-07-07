@@ -348,13 +348,15 @@ async fn handle_connection_waiting(
         }
         Message::C2SMatchListRequest => handle_match_list_request(cs, cs.m).await?,
         Message::S2SJoin => {
-            let body = S2CMatchStartBody {
+            let mut body = S2CMatchStartBody {
                 m: cs.m.unwrap().into(),
                 match_id: cs.ss.match_id.fetch_add(1, Ordering::Relaxed),
                 message_id: cs.ss.message_id.fetch_add(1, Ordering::Relaxed),
             };
             cs.state = ConnectionStateEnum::Playing;
+            body.m.color = body.m.color.determined();
             cs.tx.as_mut().unwrap().send(Message::S2SMatchStart(body))?;
+            body.m.color = body.m.color.reversed();
             cs.io.put(Message::S2CMatchStart(body)).await?;
         }
         other => err_invalid_data!(
