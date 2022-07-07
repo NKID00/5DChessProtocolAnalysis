@@ -86,6 +86,7 @@ pub async fn handle_connection(
     addr: SocketAddr,
     running: watch::Receiver<bool>,
 ) {
+    info!("[{}:{}] Connected.", addr.ip(), addr.port());
     let mut cs = ConnectionState::new(ss, addr, stream, running);
     match handle_connection_main_loop(&mut cs).await {
         Ok(()) => {}
@@ -139,7 +140,18 @@ async fn handle_connection_main_loop(cs: &mut ConnectionState) -> Result<(), Box
             },
             ConnectionStateEnum::Playing => select! {
                 result = cs.io.get() => handle_connection_playing(cs, result?).await?,
-                result = cs.rx.as_mut().unwrap().recv() => handle_connection_playing(cs, result?).await?,
+                result = cs.rx.as_mut().unwrap().recv() => {
+                    match result {
+                        Ok(msg) => handle_connection_playing(cs, msg).await?,
+                        Err(e) => {
+                            if e == broadcast::error::RecvError::Closed {
+                                handle_connection_playing(cs, Message::InternalForfeit).await?;
+                            } else {
+                                Err(e)?
+                            }
+                        },
+                    };
+                },
                 result = cs.running.changed() => break result?
             },
         }
@@ -402,7 +414,11 @@ async fn handle_connection_playing(
             cs.state = ConnectionStateEnum::Idle;
         }
         Message::C2SOrS2CAction(mut body) => {
-            body.message_id = cs.ss.message_id.fetch_add(1, Ordering::Relaxed);
+            if body.action_type == ActionType::Header {
+                body.message_id = cs.ss.message_id.load(Ordering::Relaxed);
+            } else {
+                body.message_id = cs.ss.message_id.fetch_add(1, Ordering::Relaxed);
+            }
             peer_send(cs, Message::InternalAction(body))?;
             cs.io.put(Message::C2SOrS2CAction(body)).await?;
         }

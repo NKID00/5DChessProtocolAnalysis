@@ -53,7 +53,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
         select! {
             result = listener.accept() => {
                 let (stream, addr) = result?;
-                info!("[{}:{}] Connected.", addr.ip(), addr.port());
                 handles.push_back(tokio::spawn(handle_connection(state.clone(), stream, addr, running_rx.clone())));
             },
             result = running_rx.changed() => {
