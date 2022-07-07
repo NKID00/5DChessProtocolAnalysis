@@ -337,10 +337,7 @@ async fn handle_connection_idle(
                 .await?;
         }
         Message::C2SMatchListRequest => handle_match_list_request(cs, None).await?,
-        other => err_invalid_data!(
-            "Invalid message of type {:?} at state Idle.",
-            other.message_type()
-        )?,
+        other => err_invalid_data!("Invalid message {:?} at state Idle.", other)?,
     }
     Ok(())
 }
@@ -377,10 +374,7 @@ async fn handle_connection_waiting(
             body.m.color = body.m.color.reversed();
             cs.io.put(Message::S2CMatchStart(body)).await?;
         }
-        other => err_invalid_data!(
-            "Invalid message of type {:?} at state Waiting.",
-            other.message_type()
-        )?,
+        other => err_invalid_data!("Invalid message {:?} at state Waiting.", other)?,
     }
     Ok(())
 }
@@ -425,10 +419,10 @@ async fn handle_connection_playing(
             cs.state = ConnectionStateEnum::Idle;
             cs.io.put(Message::S2COpponentLeft).await?;
         }
-        other => err_invalid_data!(
-            "Invalid message of type {:?} at state Playing.",
-            other.message_type()
-        )?,
+        Message::InternalAction(body) => {
+            cs.io.put(Message::C2SOrS2CAction(body)).await?;
+        }
+        other => err_invalid_data!("Invalid message {:?} at state Playing.", other)?,
     }
     Ok(())
 }
