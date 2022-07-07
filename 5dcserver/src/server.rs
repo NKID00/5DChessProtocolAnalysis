@@ -1,9 +1,10 @@
 use indexmap::IndexMap;
 use std::collections::HashMap;
-use std::io::{ErrorKind, Result};
+use std::error::Error;
+use std::io::ErrorKind;
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use tokio::sync::watch::Receiver;
 use tokio::sync::Mutex;
 use tokio::{net::TcpStream, select};
 use tracing::{error, info};
@@ -17,7 +18,6 @@ pub struct ServerState {
     pub matches: Mutex<HashMap<Passcode, MatchSettings>>,
     pub public_matches: Mutex<HashMap<Passcode, MatchSettingsWithoutVisibility>>,
     pub server_history_matches: Mutex<IndexMap<i64 /* Match ID */, ServerHistoryMatch>>,
-    pub running: AtomicBool,
 }
 
 impl ServerState {
@@ -28,7 +28,6 @@ impl ServerState {
             matches: Mutex::new(HashMap::<Passcode, MatchSettings>::new()),
             public_matches: Mutex::new(HashMap::<Passcode, MatchSettingsWithoutVisibility>::new()),
             server_history_matches: Mutex::new(IndexMap::<i64, ServerHistoryMatch>::new()),
-            running: AtomicBool::new(true),
         }
     }
 }
@@ -53,10 +52,16 @@ pub struct ConnectionState {
     pub io: MessageIO,
     pub io_peer: Option<MessageIO>,
     pub m: Option<MatchSettings>, // match is reserved as a key word
+    pub running: Receiver<bool>,
 }
 
 impl ConnectionState {
-    pub fn new(ss: Arc<ServerState>, addr: SocketAddr, stream: TcpStream) -> Self {
+    pub fn new(
+        ss: Arc<ServerState>,
+        addr: SocketAddr,
+        stream: TcpStream,
+        running: Receiver<bool>,
+    ) -> Self {
         ConnectionState {
             state: ConnectionStateEnum::Idle,
             ss,
@@ -65,67 +70,103 @@ impl ConnectionState {
             io: MessageIO::new(stream),
             io_peer: None,
             m: None,
+            running,
         }
     }
 
+    pub fn idle(&mut self) {
+        match self.state {
+            ConnectionStateEnum::Idle => unreachable!("Invalid state."),
+            _ => {}
+        }
+        self.state = ConnectionStateEnum::Idle;
+        self.m = None;
+        self.addr_peer = None;
+        self.io_peer = None;
+    }
+
     pub fn waiting(&mut self, m: MatchSettings) {
+        match self.state {
+            ConnectionStateEnum::Idle => {},
+            _ => unreachable!("Invalid state.")
+        }
         self.state = ConnectionStateEnum::Waiting;
         self.m = Some(m);
     }
 
-    pub fn playing(&mut self, cs_peer: ConnectionState) {
+    pub fn playing_from_waiting(&mut self, cs_peer: ConnectionState) {
+        match self.state {
+            ConnectionStateEnum::Idle => unreachable!("Invalid state."),
+            ConnectionStateEnum::Playing => unreachable!("Invalid state."),
+            _ => {}
+        }
         self.state = ConnectionStateEnum::Playing;
         self.addr_peer = Some(cs_peer.addr);
         self.io_peer = Some(cs_peer.io);
     }
+
+    pub fn playing_from_idle(&mut self, m: MatchSettings, cs_peer: ConnectionState) {
+        match self.state {
+            ConnectionStateEnum::Idle => {},
+            _ => unreachable!("Invalid state.")
+        }
+        self.waiting(m);
+        self.playing_from_waiting(cs_peer);
+    }
 }
 
-pub async fn handle_connection(ss: Arc<ServerState>, stream: TcpStream, addr: SocketAddr) {
-    let mut cs = ConnectionState::new(ss, addr, stream);
-    match handle_connection_main_loop(&mut cs).await {
-        Err(e) if e.kind() != ErrorKind::ConnectionAborted => match cs.state {
-            ConnectionStateEnum::Playing => match cs.addr_peer {
-                Some(ref addr_peer) => {
-                    error!(
-                        "[{}:{}, {}:{}] {}",
-                        cs.addr.ip(),
-                        cs.addr.port(),
-                        addr_peer.ip(),
-                        addr_peer.port(),
-                        e
-                    );
-                }
-                None => unreachable!(),
-            },
-            _ => {
-                error!("[{}:{}] {}", cs.addr.ip(), cs.addr.port(), e);
-            }
+fn trace_error(cs: &mut ConnectionState, e: Box<dyn Error>) {
+    match cs.state {
+        ConnectionStateEnum::Playing => {
+            let addr_peer = &cs.addr_peer.unwrap();
+            error!(
+                "[{}:{}, {}:{}] {}",
+                cs.addr.ip(),
+                cs.addr.port(),
+                addr_peer.ip(),
+                addr_peer.port(),
+                e
+            );
         },
-        _ => {}
+        _ => {
+            error!("[{}:{}] {}", cs.addr.ip(), cs.addr.port(), e);
+        }
     }
+}
+
+pub async fn handle_connection(
+    ss: Arc<ServerState>,
+    stream: TcpStream,
+    addr: SocketAddr,
+    running: Receiver<bool>,
+) {
+    let mut cs = ConnectionState::new(ss, addr, stream, running);
+    match handle_connection_main_loop(&mut cs).await {
+        Ok(()) => {}
+        Err(e) => match e.downcast::<std::io::Error>() {
+            Ok(e) if e.kind() == ErrorKind::ConnectionAborted => {}
+            Ok(e) => trace_error(&mut cs, e),
+            Err(e) => trace_error(&mut cs, e),
+        },
+    }
+
     // clean resources, remove match from public_matches, etc.
-    let _ = cs.io.flush().await;
+    let _ = cs.io.close().await;
     match cs.state {
         ConnectionStateEnum::Idle => {
             info!("[{}:{}] Disconnected.", addr.ip(), addr.port());
         }
         ConnectionStateEnum::Waiting => {
-            match cs.m {
-                Some(m) => {
-                    if m.visibility == Visibility::Public {
-                        cs.ss.public_matches.lock().await.remove(&m.passcode);
-                    }
-                    cs.ss.matches.lock().await.remove(&m.passcode);
-                }
-                None => unreachable!(),
+            let m = cs.m.unwrap();
+            if m.visibility == Visibility::Public {
+                cs.ss.public_matches.lock().await.remove(&m.passcode);
             }
-            error!("[{}:{}] Disconnected", cs.addr.ip(), cs.addr.port());
+            cs.ss.matches.lock().await.remove(&m.passcode);
+            info!("[{}:{}] Disconnected", cs.addr.ip(), cs.addr.port());
         }
         ConnectionStateEnum::Playing => {
-            let match_id = match cs.m {
-                Some(m) => m.match_id,
-                None => unreachable!(),
-            };
+            let _ = cs.io_peer.unwrap().close().await;
+            let match_id = cs.m.unwrap().match_id;
             {
                 let mut server_history_matches = cs.ss.server_history_matches.lock().await;
                 match server_history_matches.get_mut(&match_id) {
@@ -135,140 +176,168 @@ pub async fn handle_connection(ss: Arc<ServerState>, stream: TcpStream, addr: So
                     None => {}
                 }
             }
-            match cs.addr_peer {
-                Some(ref addr_peer) => {
-                    info!(
-                        "[{}:{}, {}:{}] Disconnected",
-                        cs.addr.ip(),
-                        cs.addr.port(),
-                        addr_peer.ip(),
-                        addr_peer.port()
-                    );
-                }
-                None => unreachable!(),
-            }
+            let addr_peer = cs.addr_peer.unwrap();
+            info!(
+                "[{}:{}, {}:{}] Disconnected",
+                cs.addr.ip(),
+                cs.addr.port(),
+                addr_peer.ip(),
+                addr_peer.port()
+            );
         }
     }
 }
 
-async fn handle_connection_main_loop(cs: &mut ConnectionState) -> Result<()> {
-    while cs.ss.running.load(Ordering::Relaxed) {
+async fn handle_connection_main_loop(cs: &mut ConnectionState) -> Result<(), Box<dyn Error>> {
+    loop {
         match cs.state {
-            ConnectionStateEnum::Idle => match cs.io.get().await? {
-                Message::C2SGreet(_body) => {
-                    cs.io.put(Message::S2CGreet).await?;
-                }
-                Message::C2SMatchCreateOrJoin(C2SMatchCreateOrJoinBody::Create(m)) => {
-                    // create match
-                    let passcode =
-                        generate_random_passcode_internal_with_exceptions(&cs.ss.matches).await;
-                    cs.ss.matches.lock().await.insert(passcode, m.clone());
-                    if m.visibility == Visibility::Public {
-                        // add to public match list
-                        cs.ss
-                            .public_matches
-                            .lock()
-                            .await
-                            .insert(m.passcode, m.clone().into());
-                        // TODO: public match max count
+            ConnectionStateEnum::Idle => select! {
+                result = cs.io.get() => match result? {
+                    Message::C2SGreet(_body) => {
+                        cs.io.put(Message::S2CGreet).await?;
                     }
-                    cs.waiting(m);
-                }
-                Message::C2SMatchCreateOrJoin(C2SMatchCreateOrJoinBody::Join(passcode)) => {
-                    // join match
-                    match cs.ss.matches.lock().await.get(&passcode) {
-                        Some(m) => {
-                            // match found
-                            if m.visibility == Visibility::Public {
-                                cs.ss.public_matches.lock().await.remove(&passcode);
+                    Message::C2SMatchCreateOrJoin(C2SMatchCreateOrJoinBody::Create(m)) => {
+                        // create match
+                        let passcode =
+                            generate_random_passcode_internal_with_exceptions(&cs.ss.matches).await;
+                        cs.ss.matches.lock().await.insert(passcode, m.clone());
+                        if m.visibility == Visibility::Public {
+                            // add to public match list
+                            cs.ss
+                                .public_matches
+                                .lock()
+                                .await
+                                .insert(m.passcode, m.clone().into());
+                            // TODO: public match max count
+                        }
+                        cs.waiting(m);
+                    }
+                    Message::C2SMatchCreateOrJoin(C2SMatchCreateOrJoinBody::Join(passcode)) => {
+                        // join match
+                        match cs.ss.matches.lock().await.get(&passcode) {
+                            Some(m) => {
+                                // match found
+                                if m.visibility == Visibility::Public {
+                                    cs.ss.public_matches.lock().await.remove(&passcode);
+                                }
+                                cs.io
+                                    .put(Message::S2CMatchCreateOrJoinResult(
+                                        S2CMatchCreateOrJoinResultBody::Success(m.clone()),
+                                    ))
+                                    .await?;
                             }
-                            cs.io
-                                .put(Message::S2CMatchCreateOrJoinResult(
-                                    S2CMatchCreateOrJoinResultBody::Success(m.clone()),
-                                ))
-                                .await?;
-                        }
-                        None => {
-                            // match not found
-                            cs.io
-                                .put(Message::S2CMatchCreateOrJoinResult(
-                                    S2CMatchCreateOrJoinResultBody::Failed,
-                                ))
-                                .await?;
+                            None => {
+                                // match not found
+                                cs.io
+                                    .put(Message::S2CMatchCreateOrJoinResult(
+                                        S2CMatchCreateOrJoinResultBody::Failed,
+                                    ))
+                                    .await?;
+                            }
                         }
                     }
-                }
-                Message::C2SMatchCancel => {
-                    cs.io
-                        .put(Message::S2CMatchCancelResult(
-                            S2CMatchCancelResultBody::Failed,
-                        ))
-                        .await?;
-                }
-                Message::C2SMatchListRequest => {
-                    let mut public_matches_count = cs.ss.public_matches.lock().await.len();
-                    if public_matches_count > 13 {
-                        public_matches_count = 13;
+                    Message::C2SMatchCancel => {
+                        cs.io
+                            .put(Message::S2CMatchCancelResult(
+                                S2CMatchCancelResultBody::Failed,
+                            ))
+                            .await?;
                     }
-                    let server_history_matches_count =
-                        cs.ss.server_history_matches.lock().await.len();
-                    let mut body = S2CMatchListNonhostBody {
-                        public_matches: [MatchSettingsWithoutVisibility {
-                            color: OptionalColorWithRandom::None,
-                            clock: OptionalClock::None,
-                            variant: 0,
-                            passcode: 0,
-                            match_id: -1,
-                        }; 13],
-                        public_matches_count,
-                        server_history_matches: [S2CMatchListServerHistoryMatch {
-                            status: HistoryMatchStatus::Completed,
-                            clock: OptionalClock::None,
-                            variant: 0,
-                            visibility: Visibility::Public,
-                            seconds_passed: 0,
-                        }; 13],
-                        server_history_matches_count,
-                    };
-                    for (i, (_, m)) in cs.ss.public_matches.lock().await.iter().enumerate() {
-                        if i >= 13 {
-                            break;
+                    Message::C2SMatchListRequest => {
+                        let mut public_matches_count = cs.ss.public_matches.lock().await.len();
+                        if public_matches_count > 13 {
+                            public_matches_count = 13;
                         }
-                        body.public_matches[i] = m.clone();
+                        let server_history_matches_count =
+                            cs.ss.server_history_matches.lock().await.len();
+                        let mut body = S2CMatchListNonhostBody {
+                            public_matches: [MatchSettingsWithoutVisibility {
+                                color: OptionalColorWithRandom::None,
+                                clock: OptionalClock::None,
+                                variant: 0,
+                                passcode: 0,
+                                match_id: -1,
+                            }; 13],
+                            public_matches_count,
+                            server_history_matches: [S2CMatchListServerHistoryMatch {
+                                status: HistoryMatchStatus::Completed,
+                                clock: OptionalClock::None,
+                                variant: 0,
+                                visibility: Visibility::Public,
+                                seconds_passed: 0,
+                            }; 13],
+                            server_history_matches_count,
+                        };
+                        for (i, (_, m)) in cs.ss.public_matches.lock().await.iter().enumerate() {
+                            if i >= 13 {
+                                break;
+                            }
+                            body.public_matches[i] = m.clone();
+                        }
+                        for (i, (_, m)) in cs.ss.server_history_matches.lock().await.iter().enumerate()
+                        {
+                            body.server_history_matches[i] = m.clone().into();
+                        }
+                        cs.io
+                            .put(Message::S2CMatchList(S2CMatchListBody::Nonhost(body)))
+                            .await?;
                     }
-                    for (i, (_, m)) in cs.ss.server_history_matches.lock().await.iter().enumerate()
-                    {
-                        body.server_history_matches[i] = m.clone().into();
-                    }
-                    cs.io
-                        .put(Message::S2CMatchList(S2CMatchListBody::Nonhost(body)))
-                        .await?;
-                }
-                other => {
-                    return err_invalid_data!(
-                        "Invalid message type {:?} at state Idle.",
-                        other.message_type()
-                    );
-                }
+                    other => err_invalid_data!(
+                            "Invalid message type {:?} at state Idle.",
+                            other.message_type()
+                        )?
+                },
+                result = cs.running.changed() => break result?
             },
 
-            ConnectionStateEnum::Waiting => {
-                let message = cs.io.get().await?;
-                todo!()
-            }
+            ConnectionStateEnum::Waiting => select! {
+                result = cs.io.get() => match result? {
+                    Message::C2SGreet(_) => todo!(),
+                    Message::S2CGreet => todo!(),
+                    Message::C2SMatchCreateOrJoin(_) => todo!(),
+                    Message::S2CMatchCreateOrJoinResult(_) => todo!(),
+                    Message::C2SMatchCancel => todo!(),
+                    Message::S2CMatchCancelResult(_) => todo!(),
+                    Message::S2CMatchStart(_) => todo!(),
+                    Message::S2COpponentLeft => todo!(),
+                    Message::C2SForfeit => todo!(),
+                    Message::C2SOrS2CAction(_) => todo!(),
+                    Message::C2SMatchListRequest => todo!(),
+                    Message::S2CMatchList(_) => todo!(),
+                },
+                result = cs.running.changed() => break result?
+            },
 
             ConnectionStateEnum::Playing => select! {
-                result = cs.io.get() => {
-                    let message = result?;
-                    todo!()
+                result = cs.io.get() => match result? {
+                    Message::C2SGreet(_) => todo!(),
+                    Message::S2CGreet => todo!(),
+                    Message::C2SMatchCreateOrJoin(_) => todo!(),
+                    Message::S2CMatchCreateOrJoinResult(_) => todo!(),
+                    Message::C2SMatchCancel => todo!(),
+                    Message::S2CMatchCancelResult(_) => todo!(),
+                    Message::S2CMatchStart(_) => todo!(),
+                    Message::S2COpponentLeft => todo!(),
+                    Message::C2SForfeit => todo!(),
+                    Message::C2SOrS2CAction(_) => todo!(),
+                    Message::C2SMatchListRequest => todo!(),
+                    Message::S2CMatchList(_) => todo!(),
                 },
-                result = match cs.io_peer {
-                    Some(ref mut io) => io.get(),
-                    None => unreachable!(),
-                } => {
-                    let message = result?;
-                    todo!()
-                }
+                result = cs.io_peer.as_mut().unwrap().get() => match result? {
+                    Message::C2SGreet(_) => todo!(),
+                    Message::S2CGreet => todo!(),
+                    Message::C2SMatchCreateOrJoin(_) => todo!(),
+                    Message::S2CMatchCreateOrJoinResult(_) => todo!(),
+                    Message::C2SMatchCancel => todo!(),
+                    Message::S2CMatchCancelResult(_) => todo!(),
+                    Message::S2CMatchStart(_) => todo!(),
+                    Message::S2COpponentLeft => todo!(),
+                    Message::C2SForfeit => todo!(),
+                    Message::C2SOrS2CAction(_) => todo!(),
+                    Message::C2SMatchListRequest => todo!(),
+                    Message::S2CMatchList(_) => todo!(),
+                },
+                result = cs.running.changed() => break result?
             },
         }
         cs.io.flush().await?;

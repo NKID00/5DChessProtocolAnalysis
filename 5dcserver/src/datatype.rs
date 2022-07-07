@@ -25,7 +25,10 @@ macro_rules! err_invalid_data {
 #[macro_export]
 macro_rules! err_disconnected {
     () => {
-        Err(std::io::Error::new(std::io::ErrorKind::ConnectionAborted, "Disconnected."))
+        Err(std::io::Error::new(
+            std::io::ErrorKind::ConnectionAborted,
+            "Disconnected.",
+        ))
     };
 }
 
@@ -615,6 +618,10 @@ impl MessageIO {
 
     pub async fn flush(&mut self) -> Result<()> {
         self.framed.flush().await
+    }
+
+    pub async fn close(mut self) -> Result<()> {
+        self.framed.close().await
     }
 }
 
