@@ -5,13 +5,17 @@ use futures::{SinkExt, StreamExt};
 use rand::Rng;
 use std::collections::HashMap;
 use std::io::{Error, Result};
-use tokio::{net::TcpStream, sync::Mutex, time::Instant};
+use tokio::net::TcpStream;
+use tokio::sync::{broadcast, Mutex};
+use tokio::time::Instant;
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
 
 pub const MESSAGE_LENGTH_MAX: usize = 4096; // >= 1008, prevent attacks
 
 pub type Variant = i64;
 pub type Passcode = i64;
+pub type MatchId = i64;
+pub type MessageId = i64;
 
 #[macro_export]
 macro_rules! err_invalid_data {
@@ -143,7 +147,7 @@ pub struct MatchSettings {
     pub variant: Variant,
     pub visibility: Visibility,
     pub passcode: Passcode,
-    pub match_id: i64,
+    pub match_id: MatchId,
 }
 impl MatchSettings {
     pub fn new(m: MatchSettingsWithoutVisibility, visibility: Visibility) -> Self {
@@ -163,7 +167,7 @@ pub struct MatchSettingsWithoutVisibility {
     pub clock: OptionalClock,
     pub variant: Variant,
     pub passcode: Passcode,
-    pub match_id: i64,
+    pub match_id: MatchId,
 }
 impl MatchSettingsWithoutVisibility {
     pub fn new(m: MatchSettings) -> Self {
@@ -188,6 +192,17 @@ pub struct ServerHistoryMatch {
     pub variant: Variant,
     pub visibility: Visibility,
     pub time_start: Instant,
+}
+impl ServerHistoryMatch {
+    pub fn new(m: MatchSettings) -> Self {
+        ServerHistoryMatch {
+            status: HistoryMatchStatus::InProgress,
+            clock: m.clock,
+            variant: m.variant,
+            visibility: m.visibility,
+            time_start: Instant::now(),
+        }
+    }
 }
 
 enum_from_primitive! {
@@ -229,7 +244,7 @@ impl MessageType {
 }
 
 // unknown or unused fields omitted
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Clone)]
 pub enum Message {
     C2SGreet(C2SGreetBody),
     S2CGreet,
@@ -243,6 +258,12 @@ pub enum Message {
     C2SOrS2CAction(C2SOrS2CActionBody),
     C2SMatchListRequest,
     S2CMatchList(S2CMatchListBody),
+
+    S2SInitialize(broadcast::Sender<Message>),
+    S2SJoin,
+    S2SMatchStart(S2CMatchStartBody),
+    S2SForfeit,
+    S2SAction(C2SOrS2CActionBody),
 }
 #[derive(Debug, Copy, Clone)]
 pub struct C2SGreetBody {
@@ -267,14 +288,14 @@ pub enum S2CMatchCancelResultBody {
 #[derive(Debug, Copy, Clone)]
 pub struct S2CMatchStartBody {
     pub m: MatchSettingsWithoutVisibility,
-    pub match_id: i64,
-    pub message_id: i64,
+    pub match_id: MatchId,
+    pub message_id: MessageId,
 }
 #[derive(Debug, Copy, Clone)]
 pub struct C2SOrS2CActionBody {
     pub action_type: ActionType,
     pub color: Color,
-    pub message_id: i64,
+    pub message_id: MessageId,
     pub src_l: i64,
     pub src_t: i64,
     pub src_board_color: Color,
@@ -344,6 +365,7 @@ impl Message {
             Message::C2SOrS2CAction(_) => MessageType::C2SOrS2CAction,
             Message::C2SMatchListRequest => MessageType::C2SMatchListRequest,
             Message::S2CMatchList(_) => MessageType::S2CMatchList,
+            _ => panic!("Invalid message type."),
         }
     }
 
@@ -661,12 +683,13 @@ pub fn generate_random_passcode_internal() -> Passcode {
 }
 
 pub async fn generate_random_passcode_internal_with_exceptions(
-    matches: &Mutex<HashMap<Passcode, MatchSettings>>,
+    exceptions: &Mutex<HashMap<Passcode, broadcast::Receiver<Message>>>,
 ) -> Passcode {
+    let exceptions = exceptions.lock().await;
     loop {
-        let v = generate_random_passcode_internal();
-        if !matches.lock().await.contains_key(&v) {
-            return v;
+        let passcode = generate_random_passcode_internal();
+        if !exceptions.contains_key(&passcode) {
+            return passcode;
         }
     }
 }
