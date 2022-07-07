@@ -137,8 +137,8 @@ enum_from_primitive! {
     #[repr(i64)]
     #[derive(Debug, Copy, Clone, PartialEq)]
     pub enum HistoryMatchStatus {
-        Completed = 0,
-        InProgress = 1
+        InProgress = 0,
+        Completed = 1
     }
 }
 

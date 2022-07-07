@@ -336,6 +336,7 @@ async fn handle_connection_idle(
                 ))
                 .await?;
         }
+        Message::C2SForfeit => {}
         Message::C2SMatchListRequest => handle_match_list_request(cs, None).await?,
         other => err_invalid_data!("Invalid message {:?} at state Idle.", other)?,
     }
