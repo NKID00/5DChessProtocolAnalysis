@@ -123,7 +123,7 @@ pub async fn handle_connection(
         }
     }
     let _ = cs.io.close().await;
-    info!("[{}:{}] Disconnected", cs.addr.ip(), cs.addr.port());
+    info!("[{}:{}] Disconnected.", cs.addr.ip(), cs.addr.port());
 }
 
 async fn handle_connection_main_loop(cs: &mut ConnectionState) -> Result<(), Box<dyn Error>> {
@@ -145,6 +145,7 @@ async fn handle_connection_main_loop(cs: &mut ConnectionState) -> Result<(), Box
                         Ok(msg) => handle_connection_playing(cs, msg).await?,
                         Err(e) => {
                             if e == broadcast::error::RecvError::Closed {
+                                // handle unexpected opponent disconnect
                                 handle_connection_playing(cs, Message::InternalForfeit).await?;
                             } else {
                                 Err(e)?

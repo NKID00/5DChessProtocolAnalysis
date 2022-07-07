@@ -559,13 +559,13 @@ impl Message {
                 let src_l = read_i64_le(&mut bytes);
                 let src_t = read_i64_le(&mut bytes);
                 let src_board_color = try_i64_to_enum(read_i64_le(&mut bytes))?;
-                let src_x = read_i64_le(&mut bytes);
                 let src_y = read_i64_le(&mut bytes);
+                let src_x = read_i64_le(&mut bytes);
                 let dst_l = read_i64_le(&mut bytes);
                 let dst_t = read_i64_le(&mut bytes);
                 let dst_board_color = try_i64_to_enum(read_i64_le(&mut bytes))?;
-                let dst_x = read_i64_le(&mut bytes);
                 let dst_y = read_i64_le(&mut bytes);
+                let dst_x = read_i64_le(&mut bytes);
                 Ok(Message::C2SOrS2CAction(C2SOrS2CActionBody {
                     action_type,
                     color,
