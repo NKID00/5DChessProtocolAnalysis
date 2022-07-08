@@ -1,5 +1,5 @@
-addr = "0.0.0.0"
-allow_reset_puzzle = false
-port = 39005
-trace = false
-variants = []
+addr = "0.0.0.0"  # Bind address
+allow_reset_puzzle = false  # Allow illegal game-resetting messages
+port = 39005  # Bind port
+trace = false  # Print detailed debug information
+variants = []  # Limit matches to only certain variants, "[]" means no limit

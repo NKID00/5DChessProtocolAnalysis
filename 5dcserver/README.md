@@ -8,7 +8,11 @@ An **Unofficial** Online Match Server of [5D Chess With Multiverse Time Travel](
 
 - Asynchronous network and inter-thread communication
 
-**Supported game features**
+- Ban illegal messages sent by hackers that would cause game to reset
+
+- Limit matches to only certain variants
+
+**Support all game features including**
 
 - Query public match list and server match history
 
@@ -17,6 +21,22 @@ An **Unofficial** Online Match Server of [5D Chess With Multiverse Time Travel](
 - All variants and random variant
 
 - Clock
+
+## Usage
+
+```
+usage: 5dcserver <CONFIG FILE>
+```
+
+## Config
+
+```toml
+addr = "0.0.0.0"  # Bind address
+allow_reset_puzzle = false  # Allow illegal game-resetting messages
+port = 39005  # Bind port
+trace = false  # Print detailed debug information
+variants = []  # Limit matches to only certain variants, "[]" means no limit
+```
 
 ## Build
 
