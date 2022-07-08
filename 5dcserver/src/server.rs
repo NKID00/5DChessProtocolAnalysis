@@ -8,6 +8,7 @@ use std::sync::Arc;
 use tokio::net::TcpStream;
 use tokio::select;
 use tokio::sync::{broadcast, watch, Mutex};
+use tokio::time::Instant;
 use tracing::{error, info, trace};
 
 use crate::datatype::*;
@@ -19,6 +20,7 @@ pub struct ServerState {
     pub matches: Mutex<HashMap<Passcode, broadcast::Receiver<Message>>>,
     pub public_matches: Mutex<HashMap<Passcode, MatchSettingsWithoutVisibility>>,
     pub server_history_matches: Mutex<IndexMap<MatchId, ServerHistoryMatch>>,
+    pub instant_start: Mutex<Instant>,
 }
 
 impl ServerState {
@@ -29,6 +31,7 @@ impl ServerState {
             matches: Mutex::new(HashMap::new()),
             public_matches: Mutex::new(HashMap::new()),
             server_history_matches: Mutex::new(IndexMap::new()),
+            instant_start: Mutex::new(Instant::now()),
         }
     }
 }
@@ -380,7 +383,7 @@ async fn handle_connection_waiting(
             let mut body = S2CMatchStartBody {
                 m: cs.m.unwrap().into(),
                 match_id: cs.ss.match_id.fetch_add(1, Ordering::Relaxed),
-                message_id: cs.ss.message_id.fetch_add(1, Ordering::Relaxed),
+                message_id: Instant::now().duration_since(*cs.ss.instant_start.lock().await).as_secs(),
             };
             cs.state = ConnectionStateEnum::Playing;
             // FIXME: determine variant
@@ -415,11 +418,7 @@ async fn handle_connection_playing(
             cs.state = ConnectionStateEnum::Idle;
         }
         Message::C2SOrS2CAction(mut body) => {
-            if body.action_type == ActionType::Header {
-                body.message_id = cs.ss.message_id.load(Ordering::Relaxed);
-            } else {
-                body.message_id = cs.ss.message_id.fetch_add(1, Ordering::Relaxed);
-            }
+            body.message_id = Instant::now().duration_since(*cs.ss.instant_start.lock().await).as_secs();
             peer_send(cs, Message::InternalAction(body))?;
             cs.io.put(Message::C2SOrS2CAction(body)).await?;
         }

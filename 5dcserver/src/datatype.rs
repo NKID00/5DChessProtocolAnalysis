@@ -16,7 +16,7 @@ pub const MESSAGE_LENGTH_MAX: usize = 4096; // >= 1008, prevent attacks
 pub type Variant = i64;
 pub type Passcode = i64;
 pub type MatchId = i64;
-pub type MessageId = i64;
+pub type MessageId = u64;
 
 #[macro_export]
 macro_rules! err_invalid_data {
@@ -417,7 +417,7 @@ impl Message {
                 write_i64_le(&mut bytes, body.m.variant);
                 write_i64_le(&mut bytes, body.match_id);
                 write_i64_le(&mut bytes, TryInto::<Color>::try_into(body.m.color)? as i64);
-                write_i64_le(&mut bytes, body.message_id);
+                write_u64_le(&mut bytes, body.message_id);
             }
             Message::S2COpponentLeft => {
                 bytes.extend_from_slice(&[0]); // unknown
@@ -425,7 +425,7 @@ impl Message {
             Message::C2SOrS2CAction(body) => {
                 write_i64_le(&mut bytes, body.action_type as i64);
                 write_i64_le(&mut bytes, body.color as i64);
-                write_i64_le(&mut bytes, body.message_id);
+                write_u64_le(&mut bytes, body.message_id);
                 write_i64_le(&mut bytes, body.src_l);
                 write_i64_le(&mut bytes, body.src_t);
                 write_i64_le(&mut bytes, body.src_board_color as i64);
@@ -555,7 +555,7 @@ impl Message {
             MessageType::C2SOrS2CAction => {
                 let action_type = try_i64_to_enum(read_i64_le(&mut bytes))?;
                 let color = try_i64_to_enum(read_i64_le(&mut bytes))?;
-                let message_id = read_i64_le(&mut bytes);
+                let message_id = read_u64_le(&mut bytes);
                 let src_l = read_i64_le(&mut bytes);
                 let src_t = read_i64_le(&mut bytes);
                 let src_board_color = try_i64_to_enum(read_i64_le(&mut bytes))?;
