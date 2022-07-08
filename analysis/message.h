@@ -38,7 +38,7 @@ struct C2SMatchCreateOrJoin
     int64_t type; /* = 3 */
     int64_t color; /* Join = 0, Random = 1, White = 2, Black = 3 */
     int64_t clock; /* Join = 0, No Clock = 1, Short = 2, Medium = 3, Long = 4 */
-    int64_t variant; /* Join = 0, Standard = 1, Random = 34, Turn Zero = 35, ... */
+    int64_t variant; /* Join = 0, Standard = 1, Random = 34, etc. */
     int64_t visibility; /* Join = 0, Public = 1, Private = 2 */
     int64_t passcode; /* Join = passcode, Create = -1 */
 };
@@ -51,7 +51,7 @@ struct S2CMatchCreateOrJoinResult
     int64_t reason; /* unconfirmed, Success = 0, Match Not Found = 1 */
     int64_t color; /* Failed = 0, Random = 1, White = 2, Black = 3 */
     int64_t clock; /* Failed = 0, No Clock = 1, Short = 2, Medium = 3, Long = 4 */
-    int64_t variant; /* Failed = 0, Standard = 1, Random = 34, Turn Zero = 35, ... */
+    int64_t variant; /* Failed = 0, Standard = 1, Random = 34, etc. */
     int64_t visibility; /* Failed = 0, Public = 1, Private = 2 */
     int64_t passcode; /* Success = passcode, Failed = -1, provide even when match is public */
 };
@@ -75,7 +75,7 @@ struct S2CMatchStart
     uint64_t length; /* = 48 */
     int64_t type; /* = 7 */
     int64_t clock; /* No Clock = 1, Short = 2, Medium = 3, Long = 4 */
-    int64_t variant; /* Standard = 1, Random = 34, Turn Zero = 35, ... */
+    int64_t variant; /* Standard = 1, Random = 34, etc. */
     int64_t matchId; /* probably some auto increasing identifier of the match */
     int64_t color; /* yours, White = 0, Black = 1 */
     uint64_t secondsPassed; /* probably time passed since a specific instant */
@@ -136,7 +136,7 @@ struct S2CMatchList
     int64_t unknown1; /* = 1 */
     int64_t color; /* Non-host = 0, Random = 1, White = 2, Black = 3 */
     int64_t clock; /* Non-host = 0, No Clock = 1, Short = 2, Medium = 3, Long = 4 */
-    int64_t variant; /* Non-host = 0, Standard = 1, Random = 34, Turn Zero = 35, ... */
+    int64_t variant; /* Non-host = 0, Standard = 1, Random = 34, etc. */
     int64_t passcode; /* Non-host = 0, Host = passcode */
     int64_t isHost; /* Non-host = 0, Host = 1 */
 
@@ -144,7 +144,7 @@ struct S2CMatchList
     {
         int64_t color; /* None = 0, Random = 1, White = 2, Black = 3 */
         int64_t clock; /* None = 0, No Clock = 1, Short = 2, Medium = 3, Long = 4 */
-        int64_t variant; /* None = 0, Standard = 1, Random = 34, Turn Zero = 35, ... */
+        int64_t variant; /* None = 0, Standard = 1, Random = 34, etc. */
         int64_t passcode; /* None = 0, Some = passcode */
     } publicMatches[13];
     int64_t publicMatchesCount;
@@ -153,7 +153,7 @@ struct S2CMatchList
     {
         int64_t status; /* In Progress = 0, Completed = 1 */
         int64_t clock; /* No Clock = 1, Short = 2, Medium = 3, Long = 4 */
-        int64_t variant; /* Standard = 1, Random = 34, Turn Zero = 35, ... */
+        int64_t variant; /* Standard = 1, Random = 34, etc. */
         int64_t visibility; /* Public = 1, Private = 2 */
         int64_t secondsPassed;
     } serverHistoryMatches[13];

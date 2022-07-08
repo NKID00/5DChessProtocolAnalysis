@@ -1,0 +1,47 @@
+Id	Name
+1	Standard
+34	Random
+3	Simple - No Bishops
+2	Simple - No Knights
+4	Simple - No Rooks
+5	Simple - No Queens
+6	Simple - Knights vs. Bishops
+45	Simple - Simple Set
+21	Small
+22	Small - Flipped
+23	Small - Centered
+24	Small - Open
+25	Very Small
+26	Very Small - Open
+15	Misc - Timeline Invasion
+18	Misc - Timeline Formations
+16	Misc - Timeline Tactician
+17	Misc - Timeline Strategos
+19	Misc - Timeline Battleground
+40	Misc - Timeline Skirmish
+46	Misc - Timeline Fragments
+44	Misc - Timeline Marauders
+28	Standard - Half Reflected
+37	Standard - Defended Pawn
+38	Standard - Princess
+35	Standard - Turn Zero
+36	Standard - Two Timelines
+39	Standard - Reversed Royalty
+27	Misc - Excessive
+20	Misc - Global Warming
+41	Misc - King of Kings
+42	Misc - Royal Queen Showdown
+7	Focused - Just Knights
+8	Focused - Just Bishops
+9	Focused - Just Rooks
+10	Focused - Just Queens
+11	Focused - Just Pawns
+12	Focused - Just Kings
+13	Focused - Just Unicorns
+14	Focused - Just Dragons
+43	Focused - Just Brawns
+29	Checkmate Practice - Knight
+30	Checkmate Practice - Bishop
+31	Checkmate Practice - Rook
+32	Checkmate Practice - Queen
+33	Checkmate Practice - Pawns

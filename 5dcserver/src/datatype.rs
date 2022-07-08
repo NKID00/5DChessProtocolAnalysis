@@ -13,7 +13,6 @@ use tracing::trace;
 
 pub const MESSAGE_LENGTH_MAX: usize = 4096; // >= 1008, prevent attacks
 
-pub type Variant = i64;
 pub type Passcode = i64;
 pub type MatchId = i64;
 
@@ -110,6 +109,73 @@ enum_from_primitive! {
         Short = 2,
         Medium = 3,
         Long = 4
+    }
+}
+enum_from_primitive! {
+    #[repr(i64)]
+    #[derive(Debug, Copy, Clone, PartialEq)]
+    pub enum Variant {
+        Standard = 1,
+        Random = 34,
+        SimpleNoBishops = 3,
+        SimpleNoKnights = 2,
+        SimpleNoRooks = 4,
+        SimpleNoQueens = 5,
+        SimpleKnightsVsBishops = 6,
+        SimpleSimpleSet = 45,
+        Small = 21,
+        SmallFlipped = 22,
+        SmallCentered = 23,
+        SmallOpen = 24,
+        VerySmall = 25,
+        VerySmallOpen = 26,
+        MiscTimelineInvasion = 15,
+        MiscTimelineFormations = 18,
+        MiscTimelineTactician = 16,
+        MiscTimelineStrategos = 17,
+        MiscTimelineBattleground = 19,
+        MiscTimelineSkirmish = 40,
+        MiscTimelineFragments = 46,
+        MiscTimelineMarauders = 44,
+        StandardHalfReflected = 28,
+        StandardDefendedPawn = 37,
+        StandardPrincess = 38,
+        StandardTurnZero = 35,
+        StandardTwoTimelines = 36,
+        StandardReversedRoyalty = 39,
+        MiscExcessive = 27,
+        MiscGlobalWarming = 20,
+        MiscKingofKings = 41,
+        MiscRoyalQueenShowdown = 42,
+        FocusedJustKnights = 7,
+        FocusedJustBishops = 8,
+        FocusedJustRooks = 9,
+        FocusedJustQueens = 10,
+        FocusedJustPawns = 11,
+        FocusedJustKings = 12,
+        FocusedJustUnicorns = 13,
+        FocusedJustDragons = 14,
+        FocusedJustBrawns = 43,
+        CheckmatePracticeKnight = 29,
+        CheckmatePracticeBishop = 30,
+        CheckmatePracticeRook = 31,
+        CheckmatePracticeQueen = 32,
+        CheckmatePracticePawns = 33,
+    }
+}
+impl Variant {
+    pub fn determined(&self) -> Self {
+        match self {
+            Variant::Random => {
+                let mut variant = rand::thread_rng().gen_range(1..=45);
+                if variant >= Variant::Random as i64 {
+                    // skip Random to avoid generating Random again
+                    variant += 1
+                }
+                try_i64_to_enum(variant).unwrap()
+            }
+            _ => self.clone(),
+        }
     }
 }
 enum_from_primitive! {
@@ -388,7 +454,7 @@ impl Message {
                         write_i64_le(&mut bytes, 0); // success
                         write_i64_le(&mut bytes, body.color as i64);
                         write_i64_le(&mut bytes, body.clock as i64);
-                        write_i64_le(&mut bytes, body.variant);
+                        write_i64_le(&mut bytes, body.variant as i64);
                         write_i64_le(&mut bytes, body.visibility as i64);
                         write_i64_le(&mut bytes, body.passcode);
                     }
@@ -413,7 +479,7 @@ impl Message {
             }
             Message::S2CMatchStart(body) => {
                 write_i64_le(&mut bytes, body.m.clock as i64);
-                write_i64_le(&mut bytes, body.m.variant);
+                write_i64_le(&mut bytes, body.m.variant as i64);
                 write_i64_le(&mut bytes, body.match_id);
                 write_i64_le(&mut bytes, TryInto::<Color>::try_into(body.m.color)? as i64);
                 write_u64_le(&mut bytes, body.seconds_passed);
@@ -458,7 +524,7 @@ impl Message {
                 for i in 0..body.public_matches_count {
                     write_i64_le(&mut bytes, body.public_matches[i].color as i64);
                     write_i64_le(&mut bytes, body.public_matches[i].clock as i64);
-                    write_i64_le(&mut bytes, body.public_matches[i].variant);
+                    write_i64_le(&mut bytes, body.public_matches[i].variant as i64);
                     write_i64_le(&mut bytes, body.public_matches[i].passcode);
                 }
                 for _ in body.public_matches_count..13 {
@@ -470,7 +536,7 @@ impl Message {
                 for i in 0..body.server_history_matches_count {
                     write_i64_le(&mut bytes, body.server_history_matches[i].status as i64);
                     write_i64_le(&mut bytes, body.server_history_matches[i].clock as i64);
-                    write_i64_le(&mut bytes, body.server_history_matches[i].variant);
+                    write_i64_le(&mut bytes, body.server_history_matches[i].variant as i64);
                     write_i64_le(&mut bytes, body.server_history_matches[i].visibility as i64);
                     write_u64_le(&mut bytes, body.server_history_matches[i].seconds_passed);
                 }
@@ -531,6 +597,7 @@ impl Message {
                     // create match
                     let color = try_i64_to_enum(color)?;
                     let clock = try_i64_to_enum(clock)?;
+                    let variant = try_i64_to_enum(variant)?;
                     let visibility = try_i64_to_enum(visibility)?;
                     Ok(Message::C2SMatchCreateOrJoin(
                         C2SMatchCreateOrJoinBody::Create(MatchSettings {

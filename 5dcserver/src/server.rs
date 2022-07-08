@@ -178,7 +178,7 @@ async fn handle_match_list_request(
         public_matches: [MatchSettingsWithoutVisibility {
             color: OptionalColorWithRandom::None,
             clock: OptionalClock::None,
-            variant: 0,
+            variant: Variant::Standard,
             passcode: 0,
             match_id: -1,
         }; 13],
@@ -186,7 +186,7 @@ async fn handle_match_list_request(
         server_history_matches: [S2CMatchListServerHistoryMatch {
             status: HistoryMatchStatus::Completed,
             clock: OptionalClock::None,
-            variant: 0,
+            variant: Variant::Standard,
             visibility: Visibility::Public,
             seconds_passed: 0,
         }; 13],
@@ -266,6 +266,7 @@ async fn handle_connection_idle(
                     .insert(m.passcode, m.clone().into());
                 // TODO: limit number of public matches
             }
+            info!("Variant {:?}", m.variant);
             cs.m = Some(m);
             cs.state = ConnectionStateEnum::Waiting;
             cs.io
@@ -386,7 +387,7 @@ async fn handle_connection_waiting(
                     .as_secs(),
             };
             cs.state = ConnectionStateEnum::Playing;
-            // FIXME: determine variant
+            body.m.variant = body.m.variant.determined();
             body.m.color = body.m.color.determined();
             peer_send(cs, Message::InternalMatchStart(body))?;
             body.m.color = body.m.color.reversed();
