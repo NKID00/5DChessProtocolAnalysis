@@ -18,10 +18,6 @@ An **Unofficial** Online Match Server of [5D Chess With Multiverse Time Travel](
 
 - Clock
 
-**In progress game features**
-
-- Server history match state
-
 ## Build
 
 Requires the latest Rust toolchain.
