@@ -1,6 +1,6 @@
 [package]
 name = "fivedcserver"
-version = "0.1.0"
+version = "1.0.0"
 authors = ["NKID00 <NKID00@pm.me>"]
 license = "AGPL-3.0-only"
 edition = "2021"
