@@ -14,15 +14,15 @@ An **Unofficial** Online Match Server of [5D Chess With Multiverse Time Travel](
 
 - Create, join and play public and private matches
 
-- Standard and Standard - Turn Zero variants
+- All variants and random variant
 
 - Clock
 
-**Unsupported game features** (work in progress)
+**In progress game features**
 
-- Variants other than Standard and Standard - Turn Zero
+- Query public match list after creating public match
 
-- Random variant
+- Server history match state
 
 ## Build
 
