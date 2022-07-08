@@ -16,13 +16,13 @@ An **Unofficial** Online Match Server of [5D Chess With Multiverse Time Travel](
 
 - Standard and Standard - Turn Zero variants
 
+- Clock
+
 **Unsupported game features** (work in progress)
 
 - Variants other than Standard and Standard - Turn Zero
 
 - Random variant
-
-- Clock
 
 ## Build
 

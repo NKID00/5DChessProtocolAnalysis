@@ -16,7 +16,6 @@ use crate::datatype::*;
 #[derive(Debug)]
 pub struct ServerState {
     pub match_id: AtomicI64,
-    pub message_id: AtomicI64,
     pub matches: Mutex<HashMap<Passcode, broadcast::Receiver<Message>>>,
     pub public_matches: Mutex<HashMap<Passcode, MatchSettingsWithoutVisibility>>,
     pub server_history_matches: Mutex<IndexMap<MatchId, ServerHistoryMatch>>,
@@ -27,7 +26,6 @@ impl ServerState {
     pub fn new() -> Self {
         ServerState {
             match_id: AtomicI64::new(1),
-            message_id: AtomicI64::new(1),
             matches: Mutex::new(HashMap::new()),
             public_matches: Mutex::new(HashMap::new()),
             server_history_matches: Mutex::new(IndexMap::new()),
@@ -331,7 +329,7 @@ async fn handle_connection_idle(
                         .put(Message::S2CMatchStart(S2CMatchStartBody {
                             m: body.m,
                             match_id: body.match_id,
-                            message_id: body.message_id,
+                            seconds_passed: body.seconds_passed,
                         }))
                         .await?;
                 }
@@ -383,7 +381,9 @@ async fn handle_connection_waiting(
             let mut body = S2CMatchStartBody {
                 m: cs.m.unwrap().into(),
                 match_id: cs.ss.match_id.fetch_add(1, Ordering::Relaxed),
-                message_id: Instant::now().duration_since(*cs.ss.instant_start.lock().await).as_secs(),
+                seconds_passed: Instant::now()
+                    .duration_since(*cs.ss.instant_start.lock().await)
+                    .as_secs(),
             };
             cs.state = ConnectionStateEnum::Playing;
             // FIXME: determine variant
@@ -418,7 +418,9 @@ async fn handle_connection_playing(
             cs.state = ConnectionStateEnum::Idle;
         }
         Message::C2SOrS2CAction(mut body) => {
-            body.message_id = Instant::now().duration_since(*cs.ss.instant_start.lock().await).as_secs();
+            body.seconds_passed = Instant::now()
+                .duration_since(*cs.ss.instant_start.lock().await)
+                .as_secs();
             peer_send(cs, Message::InternalAction(body))?;
             cs.io.put(Message::C2SOrS2CAction(body)).await?;
         }

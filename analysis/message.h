@@ -78,7 +78,7 @@ struct S2CMatchStart
     int64_t variant; /* Standard = 1, Random = 34, Turn Zero = 35, ... */
     int64_t matchId; /* probably some auto increasing identifier of the match */
     int64_t color; /* yours, White = 0, Black = 1 */
-    uint64_t time; /* probably time passed in seconds since a specific instant */
+    uint64_t secondsPassed; /* probably time passed since a specific instant */
 };
 
 /* type = 8 is never seen, why? */
@@ -107,7 +107,7 @@ struct C2SOrS2CAction
     int64_t type; /* = 11 */
     int64_t actionType; /* Move = 1, Undo Move = 2, Submit Moves = 3, Reset Puzzle (it does reset the whole game, be cautious!) = 4, Display Check Reason = 5, Header = 6 */
     int64_t color; /* White = 0, Black = 1 */
-    uint64_t time; /* C2S = 0, S2C = probably time passed in seconds since a specific instant */
+    uint64_t secondsPassed; /* C2S = 0, S2C = probably time passed since a specific instant */
     /* following ignored if actionType is not Move = 1 or Display Check Reason = 5 */
     int64_t srcL;
     int64_t srcT;

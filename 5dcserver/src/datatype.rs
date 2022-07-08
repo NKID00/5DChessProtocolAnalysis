@@ -16,7 +16,6 @@ pub const MESSAGE_LENGTH_MAX: usize = 4096; // >= 1008, prevent attacks
 pub type Variant = i64;
 pub type Passcode = i64;
 pub type MatchId = i64;
-pub type MessageId = u64;
 
 #[macro_export]
 macro_rules! err_invalid_data {
@@ -291,13 +290,13 @@ pub enum S2CMatchCancelResultBody {
 pub struct S2CMatchStartBody {
     pub m: MatchSettingsWithoutVisibility,
     pub match_id: MatchId,
-    pub message_id: MessageId,
+    pub seconds_passed: u64,
 }
 #[derive(Debug, Copy, Clone)]
 pub struct C2SOrS2CActionBody {
     pub action_type: ActionType,
     pub color: Color,
-    pub message_id: MessageId,
+    pub seconds_passed: u64,
     pub src_l: i64,
     pub src_t: i64,
     pub src_board_color: Color,
@@ -417,7 +416,7 @@ impl Message {
                 write_i64_le(&mut bytes, body.m.variant);
                 write_i64_le(&mut bytes, body.match_id);
                 write_i64_le(&mut bytes, TryInto::<Color>::try_into(body.m.color)? as i64);
-                write_u64_le(&mut bytes, body.message_id);
+                write_u64_le(&mut bytes, body.seconds_passed);
             }
             Message::S2COpponentLeft => {
                 bytes.extend_from_slice(&[0]); // unknown
@@ -425,7 +424,7 @@ impl Message {
             Message::C2SOrS2CAction(body) => {
                 write_i64_le(&mut bytes, body.action_type as i64);
                 write_i64_le(&mut bytes, body.color as i64);
-                write_u64_le(&mut bytes, body.message_id);
+                write_u64_le(&mut bytes, body.seconds_passed);
                 write_i64_le(&mut bytes, body.src_l);
                 write_i64_le(&mut bytes, body.src_t);
                 write_i64_le(&mut bytes, body.src_board_color as i64);
@@ -555,7 +554,7 @@ impl Message {
             MessageType::C2SOrS2CAction => {
                 let action_type = try_i64_to_enum(read_i64_le(&mut bytes))?;
                 let color = try_i64_to_enum(read_i64_le(&mut bytes))?;
-                let message_id = read_u64_le(&mut bytes);
+                let seconds_passed = read_u64_le(&mut bytes);
                 let src_l = read_i64_le(&mut bytes);
                 let src_t = read_i64_le(&mut bytes);
                 let src_board_color = try_i64_to_enum(read_i64_le(&mut bytes))?;
@@ -569,7 +568,7 @@ impl Message {
                 Ok(Message::C2SOrS2CAction(C2SOrS2CActionBody {
                     action_type,
                     color,
-                    message_id,
+                    seconds_passed,
                     src_l,
                     src_t,
                     src_board_color,
