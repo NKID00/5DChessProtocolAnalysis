@@ -1,0 +1,5 @@
+addr = "0.0.0.0"
+allow_reset_puzzle = false
+port = 39005
+trace = false
+variants = []
