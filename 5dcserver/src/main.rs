@@ -15,6 +15,14 @@ use server::{handle_connection, ServerState};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
+    println!(
+        "5dcserver {} ({}) [rustc {}]",
+        env!("VERGEN_BUILD_SEMVER"),
+        env!("VERGEN_GIT_SHA_SHORT"),
+        env!("VERGEN_RUSTC_SEMVER")
+    );
+    println!("Copyright (C) 2022 NKID00, licensed under AGPL-3.0-only");
+
     let sub = FmtSubscriber::builder()
         .with_max_level(if cfg!(debug_assertions) {
             Level::TRACE
@@ -23,12 +31,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
         })
         .finish();
     subscriber::set_global_default(sub)?;
-    info!(
-        "5dcserver {} ({}) [rustc {}]",
-        env!("VERGEN_BUILD_SEMVER"),
-        env!("VERGEN_GIT_SHA_SHORT"),
-        env!("VERGEN_RUSTC_SEMVER")
-    );
 
     let (running_tx, mut running_rx) = watch::channel(true);
     let state = Arc::new(ServerState::new());
