@@ -192,24 +192,21 @@ async fn handle_match_list_request(
         }; 13],
         server_history_matches_count,
     };
-    let mut public_match_index_max = 13;
-    for (i, (_, public_match)) in cs.ss.public_matches.lock().await.iter().enumerate() {
+    for (_i, (_passcode, public_match)) in cs.ss.public_matches.lock().await.iter().enumerate() {
         match m {
-            Some(m) if m.match_id == public_match.match_id => {
-                // skip host match
-                public_match_index_max = 14;
-                continue;
+            // skip host match
+            Some(m) if m.match_id == public_match.match_id => {}
+            _ => {
+                if public_matches_count >= 13 {
+                    break;
+                }
+                body.public_matches[public_matches_count] = public_match.clone();
+                public_matches_count += 1;
             }
-            _ => {}
         }
-        if i >= public_match_index_max {
-            break;
-        }
-        body.public_matches[i] = public_match.clone();
-        public_matches_count += 1;
     }
     body.public_matches_count = public_matches_count;
-    for (i, (_, server_history_match)) in
+    for (i, (_match_id, server_history_match)) in
         cs.ss.server_history_matches.lock().await.iter().enumerate()
     {
         body.server_history_matches[server_history_matches_count - i - 1] =
@@ -257,6 +254,7 @@ async fn handle_connection_idle(
             peer_send(cs, Message::InternalInitialize(tx_peer))?;
             // add to match list
             cs.ss.matches.lock().await.insert(m.passcode, rx_peer);
+            m.match_id = cs.ss.match_id.fetch_add(1, Ordering::Relaxed);
             if m.visibility == Visibility::Public {
                 // add to public match list
                 cs.ss
@@ -266,7 +264,6 @@ async fn handle_connection_idle(
                     .insert(m.passcode, m.clone().into());
                 // TODO: limit number of public matches
             }
-            info!("Variant {:?}", m.variant);
             cs.m = Some(m);
             cs.state = ConnectionStateEnum::Waiting;
             cs.io
@@ -381,7 +378,7 @@ async fn handle_connection_waiting(
         Message::InternalJoin => {
             let mut body = S2CMatchStartBody {
                 m: cs.m.unwrap().into(),
-                match_id: cs.ss.match_id.fetch_add(1, Ordering::Relaxed),
+                match_id: cs.m.unwrap().match_id,
                 seconds_passed: Instant::now()
                     .duration_since(*cs.ss.instant_start.lock().await)
                     .as_secs(),
@@ -425,7 +422,7 @@ async fn handle_connection_playing(
             peer_send(cs, Message::InternalAction(body))?;
             cs.io.put(Message::C2SOrS2CAction(body)).await?;
         }
-        Message::C2SMatchListRequest => handle_match_list_request(cs, cs.m).await?,
+        Message::C2SMatchListRequest => handle_match_list_request(cs, None).await?,
         Message::InternalForfeit => {
             let match_id = cs.m.unwrap().match_id;
             let mut server_history_matches = cs.ss.server_history_matches.lock().await;

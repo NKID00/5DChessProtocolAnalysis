@@ -20,8 +20,6 @@ An **Unofficial** Online Match Server of [5D Chess With Multiverse Time Travel](
 
 **In progress game features**
 
-- Query public match list after creating public match
-
 - Server history match state
 
 ## Build
