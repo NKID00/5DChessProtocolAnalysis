@@ -117,7 +117,7 @@ pub async fn handle_connection(
             let mut server_history_matches = cs.ss.server_history_matches.lock().await;
             match server_history_matches.get_mut(&match_id) {
                 Some(v) => {
-                    v.status = HistoryMatchStatus::Completed;
+                    v.state = HistoryMatchState::Completed;
                 }
                 None => {}
             }
@@ -184,7 +184,7 @@ async fn handle_match_list_request(
         }; 13],
         public_matches_count,
         server_history_matches: [S2CMatchListServerHistoryMatch {
-            status: HistoryMatchStatus::Completed,
+            state: HistoryMatchState::Completed,
             clock: OptionalClock::None,
             variant: Variant::Standard,
             visibility: Visibility::Public,
@@ -406,7 +406,7 @@ async fn handle_connection_playing(
             let mut server_history_matches = cs.ss.server_history_matches.lock().await;
             match server_history_matches.get_mut(&match_id) {
                 Some(v) => {
-                    v.status = HistoryMatchStatus::Completed;
+                    v.state = HistoryMatchState::Completed;
                 }
                 None => {}
             }
@@ -428,7 +428,7 @@ async fn handle_connection_playing(
             let mut server_history_matches = cs.ss.server_history_matches.lock().await;
             match server_history_matches.get_mut(&match_id) {
                 Some(v) => {
-                    v.status = HistoryMatchStatus::Completed;
+                    v.state = HistoryMatchState::Completed;
                 }
                 None => {}
             }

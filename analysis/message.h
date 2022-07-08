@@ -151,7 +151,7 @@ struct S2CMatchList
 
     struct ServerHistoryMatch
     {
-        int64_t status; /* In Progress = 0, Completed = 1 */
+        int64_t state; /* Completed = 0, In Progress = 1 */
         int64_t clock; /* No Clock = 1, Short = 2, Medium = 3, Long = 4 */
         int64_t variant; /* Standard = 1, Random = 34, etc. */
         int64_t visibility; /* Public = 1, Private = 2 */

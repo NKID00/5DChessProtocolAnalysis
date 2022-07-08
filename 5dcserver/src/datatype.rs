@@ -201,9 +201,9 @@ enum_from_primitive! {
 enum_from_primitive! {
     #[repr(i64)]
     #[derive(Debug, Copy, Clone, PartialEq)]
-    pub enum HistoryMatchStatus {
-        InProgress = 0,
-        Completed = 1
+    pub enum HistoryMatchState {
+        Completed = 0,
+        InProgress = 1
     }
 }
 
@@ -254,7 +254,7 @@ impl From<MatchSettings> for MatchSettingsWithoutVisibility {
 }
 #[derive(Debug, Copy, Clone)]
 pub struct ServerHistoryMatch {
-    pub status: HistoryMatchStatus,
+    pub state: HistoryMatchState,
     pub clock: OptionalClock,
     pub variant: Variant,
     pub visibility: Visibility,
@@ -263,7 +263,7 @@ pub struct ServerHistoryMatch {
 impl ServerHistoryMatch {
     pub fn new(m: MatchSettings) -> Self {
         ServerHistoryMatch {
-            status: HistoryMatchStatus::InProgress,
+            state: HistoryMatchState::InProgress,
             clock: m.clock,
             variant: m.variant,
             visibility: m.visibility,
@@ -396,7 +396,7 @@ pub struct S2CMatchListNonhostBody {
 }
 #[derive(Debug, Copy, Clone)]
 pub struct S2CMatchListServerHistoryMatch {
-    pub status: HistoryMatchStatus,
+    pub state: HistoryMatchState,
     pub clock: OptionalClock,
     pub variant: Variant,
     pub visibility: Visibility,
@@ -405,7 +405,7 @@ pub struct S2CMatchListServerHistoryMatch {
 impl From<ServerHistoryMatch> for S2CMatchListServerHistoryMatch {
     fn from(m: ServerHistoryMatch) -> Self {
         S2CMatchListServerHistoryMatch {
-            status: m.status,
+            state: m.state,
             clock: m.clock,
             variant: m.variant,
             visibility: m.visibility,
@@ -534,7 +534,7 @@ impl Message {
                 }
                 write_u64_le(&mut bytes, body.public_matches_count as u64);
                 for i in 0..body.server_history_matches_count {
-                    write_i64_le(&mut bytes, body.server_history_matches[i].status as i64);
+                    write_i64_le(&mut bytes, body.server_history_matches[i].state as i64);
                     write_i64_le(&mut bytes, body.server_history_matches[i].clock as i64);
                     write_i64_le(&mut bytes, body.server_history_matches[i].variant as i64);
                     write_i64_le(&mut bytes, body.server_history_matches[i].visibility as i64);
