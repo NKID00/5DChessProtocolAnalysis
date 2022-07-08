@@ -113,7 +113,7 @@ enum_from_primitive! {
 }
 enum_from_primitive! {
     #[repr(i64)]
-    #[derive(Debug, Copy, Clone, PartialEq)]
+    #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
     pub enum Variant {
         Standard = 1,
         Random = 34,
@@ -164,15 +164,11 @@ enum_from_primitive! {
     }
 }
 impl Variant {
-    pub fn determined(&self) -> Self {
+    pub fn determined(&self, variants_without_random: &Vec<Self>) -> Self {
         match self {
             Variant::Random => {
-                let mut variant = rand::thread_rng().gen_range(1..=45);
-                if variant >= Variant::Random as i64 {
-                    // skip Random to avoid generating Random again
-                    variant += 1
-                }
-                try_i64_to_enum(variant).unwrap()
+                variants_without_random
+                    [rand::thread_rng().gen_range(0..variants_without_random.len())]
             }
             _ => self.clone(),
         }

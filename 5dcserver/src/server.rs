@@ -1,5 +1,5 @@
 use indexmap::IndexMap;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::error::Error;
 use std::io::ErrorKind;
 use std::net::SocketAddr;
@@ -19,17 +19,25 @@ pub struct ServerState {
     pub matches: Mutex<HashMap<Passcode, broadcast::Receiver<Message>>>,
     pub public_matches: Mutex<HashMap<Passcode, MatchSettingsWithoutVisibility>>,
     pub server_history_matches: Mutex<IndexMap<MatchId, ServerHistoryMatch>>,
-    pub instant_start: Mutex<Instant>,
+    pub instant_start: Instant,
+    pub allow_reset_puzzle: bool,
+    pub variants: HashSet<Variant>,
+    pub variants_without_random: Vec<Variant>,
 }
 
 impl ServerState {
-    pub fn new() -> Self {
+    pub fn new(allow_reset_puzzle: bool, variants: HashSet<Variant>) -> Self {
+        let mut variants_without_random = variants.clone();
+        variants_without_random.remove(&Variant::Random);
         ServerState {
             match_id: AtomicI64::new(1),
             matches: Mutex::new(HashMap::new()),
             public_matches: Mutex::new(HashMap::new()),
             server_history_matches: Mutex::new(IndexMap::new()),
-            instant_start: Mutex::new(Instant::now()),
+            instant_start: Instant::now(),
+            allow_reset_puzzle,
+            variants,
+            variants_without_random: Vec::from_iter(variants_without_random)
         }
     }
 }
@@ -245,6 +253,9 @@ async fn handle_connection_idle(
         }
         Message::C2SMatchCreateOrJoin(C2SMatchCreateOrJoinBody::Create(mut m)) => {
             // create match
+            if !cs.ss.variants.contains(&m.variant) {
+                err_invalid_data!("Variant {:?} is not allowed.", m.variant)?;
+            }
             m.passcode = generate_random_passcode_internal_with_exceptions(&cs.ss.matches).await;
             let (tx, rx_peer) = broadcast::channel(8);
             let (tx_peer, rx) = broadcast::channel(8);
@@ -379,12 +390,10 @@ async fn handle_connection_waiting(
             let mut body = S2CMatchStartBody {
                 m: cs.m.unwrap().into(),
                 match_id: cs.m.unwrap().match_id,
-                seconds_passed: Instant::now()
-                    .duration_since(*cs.ss.instant_start.lock().await)
-                    .as_secs(),
+                seconds_passed: Instant::now().duration_since(cs.ss.instant_start).as_secs(),
             };
             cs.state = ConnectionStateEnum::Playing;
-            body.m.variant = body.m.variant.determined();
+            body.m.variant = body.m.variant.determined(&cs.ss.variants_without_random);
             body.m.color = body.m.color.determined();
             peer_send(cs, Message::InternalMatchStart(body))?;
             body.m.color = body.m.color.reversed();
@@ -416,9 +425,10 @@ async fn handle_connection_playing(
             cs.state = ConnectionStateEnum::Idle;
         }
         Message::C2SOrS2CAction(mut body) => {
-            body.seconds_passed = Instant::now()
-                .duration_since(*cs.ss.instant_start.lock().await)
-                .as_secs();
+            if (!cs.ss.allow_reset_puzzle) && body.action_type == ActionType::ResetPuzzle {
+                err_invalid_data!("Action type of {:?} is not allowed.", body.action_type)?;
+            }
+            body.seconds_passed = Instant::now().duration_since(cs.ss.instant_start).as_secs();
             peer_send(cs, Message::InternalAction(body))?;
             cs.io.put(Message::C2SOrS2CAction(body)).await?;
         }

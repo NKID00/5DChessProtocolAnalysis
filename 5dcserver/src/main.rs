@@ -1,5 +1,5 @@
 use futures::future::join_all;
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 use std::env;
 use std::error::Error;
 use std::io::ErrorKind;
@@ -16,6 +16,7 @@ pub mod datatype;
 pub mod server;
 
 use server::{handle_connection, ServerState};
+use datatype::*;
 
 fn print_usage(arg0: &String) {
     println!();
@@ -84,9 +85,26 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .finish();
     subscriber::set_global_default(sub)?;
 
+    // init server state
+    let allow_reset_puzzle = get_config(&config, "allow_reset_puzzle", false);
+    let variants = get_config(&config, "variants", toml::value::Array::new());
+    let variants = {
+        let mut variants_set = HashSet::new();
+        if variants.len() == 0 {
+            for i in 1..46 {
+                variants_set.insert(try_i64_to_enum(i)?);
+            }
+        } else {
+            for i in variants {
+                variants_set.insert(try_i64_to_enum(i.as_integer().unwrap())?);
+            }
+        }
+        variants_set
+    };
+    let state = Arc::new(ServerState::new(allow_reset_puzzle, variants));
+
     // handle ctrl-c
     let (running_tx, mut running_rx) = watch::channel(true);
-    let state = Arc::new(ServerState::new());
     ctrlc::set_handler(move || {
         running_tx.send_if_modified(|running| {
             if *running {
