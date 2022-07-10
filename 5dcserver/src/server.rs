@@ -395,9 +395,9 @@ async fn handle_connection_waiting(
             cs.state = ConnectionStateEnum::Playing;
             body.m.variant = body.m.variant.determined(&cs.ss.variants_without_random);
             body.m.color = body.m.color.determined();
-            peer_send(cs, Message::InternalMatchStart(body))?;
-            body.m.color = body.m.color.reversed();
             cs.io.put(Message::S2CMatchStart(body)).await?;
+            body.m.color = body.m.color.reversed();
+            peer_send(cs, Message::InternalMatchStart(body))?;
         }
         other => err_invalid_data!("Invalid message {:?} at state Waiting.", other)?,
     }
