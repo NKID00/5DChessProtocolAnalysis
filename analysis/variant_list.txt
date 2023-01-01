@@ -1,4 +1,4 @@
-Id	Name
+ID	Name
 1	Standard
 34	Random
 3	Simple - No Bishops

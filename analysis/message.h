@@ -6,7 +6,7 @@ The field length excludes itself.
 Comments of unknown fields are seen values.
 Passcode seems to identify not started matches (both public and private).
 Other two tokens seems to identify every match and every S2C action message.
-All judgments is performed locally thus it is impossible to cheat. */
+All judgments are performed locally thus it is impossible to cheat. */
 
 struct C2SGreet
 {
@@ -97,8 +97,8 @@ struct C2SForfeit
     int8_t unknown; /* = 0 */
 };
 
-/* C2S carries your action, S2C carries their action.
-All judgments (capture, check, checkmate, clock, etc.) is performed locally.
+/* C2S carries your action, S2C carries their or echo-back action.
+All judgments (capture, check, checkmate, clock, etc.) are performed locally.
 Server will echo back with id added on every C2S action message.
 A single header without action is considered an opponent timeout. */
 struct C2SOrS2CAction
