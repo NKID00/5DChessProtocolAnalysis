@@ -14,6 +14,14 @@ An **Unofficial** Online Match Server of [5D Chess With Multiverse Time Travel](
 - All variants and random variant
 - Clock
 
+Try it out:
+
+```
+./5dchesswithmultiversetimetravel --server-hostname 5d.nkid00.name
+```
+
+(you'll probably have the very same experience as the official server, sadly)
+
 ## Usage
 
 On the server side:
