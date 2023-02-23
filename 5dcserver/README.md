@@ -20,6 +20,12 @@ Try it out:
 ./5dchesswithmultiversetimetravel --server-hostname 5d.nkid00.name
 ```
 
+For users in China mainland:
+
+```
+./5dchesswithmultiversetimetravel --server-hostname 5dc.nkid00.name
+```
+
 (you'll probably have the very same experience as the official server, sadly)
 
 ## Usage
@@ -42,7 +48,7 @@ The default port is 39005.
 
 ## Build
 
-Building requires the latest Rust toolchain and needs to be performed within the git repo.
+Building requires the latest Rust toolchain.
 
 ```sh
 cd 5dcserver
