@@ -1,7 +1,8 @@
+use anyhow::Result;
 use futures::future::join_all;
+use indoc::indoc;
 use std::collections::{HashSet, VecDeque};
 use std::env;
-use std::error::Error;
 use std::io::ErrorKind;
 use std::process::exit;
 use std::sync::Arc;
@@ -15,8 +16,8 @@ use tracing_subscriber::FmtSubscriber;
 pub mod datatype;
 pub mod server;
 
-use server::{handle_connection, ServerState};
 use datatype::*;
+use server::{handle_connection, ServerState};
 
 fn print_usage(arg0: &String) {
     println!();
@@ -24,7 +25,7 @@ fn print_usage(arg0: &String) {
 }
 
 fn get_config<'a, T: toml::macros::Deserialize<'a>>(
-    config: &toml::value::Map<String, toml::Value>,
+    config: &toml::Table,
     name: &str,
     default: T,
 ) -> T {
@@ -38,12 +39,15 @@ fn get_config<'a, T: toml::macros::Deserialize<'a>>(
 }
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn Error>> {
+async fn main() -> Result<()> {
     // banner
     println!(
         "5dcserver {} ({}) [rustc {}]",
         env!("VERGEN_BUILD_SEMVER"),
-        env!("VERGEN_GIT_SHA_SHORT"),
+        match option_env!("VERGEN_GIT_SHA_SHORT") {
+            Some(s) => s,
+            None => "unknown rev"
+        },
         env!("VERGEN_RUSTC_SEMVER")
     );
     println!("Copyright (C) 2022 NKID00, licensed under AGPL-3.0-only");
@@ -59,20 +63,26 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let config = match fs::read(&args[1]).await {
         Ok(config) => toml::from_str(String::from_utf8(config)?.as_str())?,
         Err(e) if e.kind() == ErrorKind::NotFound => {
-            let config = toml::toml! {
-                addr = "0.0.0.0"
-                allow_reset_puzzle = false
-                port = 39005
-                trace = false
-                variants = []
-            };
-            fs::write(&args[1], config.to_string()).await?;
-            config
+            let default_config = indoc! {"
+                addr = [\"0.0.0.0\", \"::\"]  # Bind address
+                port = 39005  # Bind port, official server uses 39005
+                trace = true  # Print detailed debug information
+                
+                ban_public_match = false  # Ban public matches (allow private matches only)
+                ban_private_match = false  # Ban private matches (allow public matches only)
+                ban_reset_puzzle = true  # Ban illegal game-resetting messages
+                ban_variant = []  # IDs of banned variants, see the variant list
+                
+                limit_concurrent_match = 2000  # maximum number of matches
+                limit_public_waiting = 100  # maximum number of public waiting matches
+                limit_connection_duration = 259200  # maximum duration of a client connection in seconds
+                limit_message_length = 4096  # maximum length of a network packet in bytes, must be >= 1008
+            "};
+            fs::write(&args[1], default_config).await?;
+            toml::from_str(default_config)?
         }
         Err(e) => Err(e)?,
-    }
-    .try_into()
-    .unwrap();
+    };
 
     // register tracing
     let trace = get_config(&config, "trace", false);

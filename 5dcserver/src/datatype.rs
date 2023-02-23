@@ -545,7 +545,7 @@ impl Message {
             }
             _ => {
                 return err_invalid_data!(
-                    "Message type {:?} shouldn't be packed.",
+                    "Message of type {:?} shouldn't be packed.",
                     self.message_type()
                 );
             }

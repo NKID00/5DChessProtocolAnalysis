@@ -5,10 +5,11 @@ use std::io::ErrorKind;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::net::TcpStream;
 use tokio::select;
 use tokio::sync::{broadcast, watch, Mutex};
-use tokio::time::Instant;
+use tokio::time::{Instant, sleep};
 use tracing::{error, info, trace};
 
 use crate::datatype::*;
@@ -57,10 +58,10 @@ pub enum ConnectionStateEnum {
 pub struct ConnectionState {
     pub state: ConnectionStateEnum,
     pub ss: Arc<ServerState>,
-    pub addr: SocketAddr,
-    pub io: MessageIO,
-    pub tx: Option<broadcast::Sender<Message>>,
-    pub rx: Option<broadcast::Receiver<Message>>,
+    pub addr: SocketAddr,  // client
+    pub io: MessageIO,  // client
+    pub tx: Option<broadcast::Sender<Message>>,  // peer
+    pub rx: Option<broadcast::Receiver<Message>>,  // peer
     pub m: Option<MatchSettings>, // match is reserved as a key word
     pub running: watch::Receiver<bool>,
 }
@@ -426,7 +427,7 @@ async fn handle_connection_playing(
         }
         Message::C2SOrS2CAction(mut body) => {
             if (!cs.ss.allow_reset_puzzle) && body.action_type == ActionType::ResetPuzzle {
-                err_invalid_data!("Action type of {:?} is not allowed.", body.action_type)?;
+                err_invalid_data!("Action of type {:?} is not allowed.", body.action_type)?;
             }
             body.seconds_passed = Instant::now().duration_since(cs.ss.instant_start).as_secs();
             peer_send(cs, Message::InternalAction(body))?;
