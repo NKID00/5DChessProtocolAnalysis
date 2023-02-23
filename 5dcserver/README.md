@@ -36,7 +36,7 @@ On the server side:
 ./5dcserver <CONFIG FILE>
 ```
 
-See the [default configuration file](./5dcserver.toml) for available options.
+See the [default configuration file](./src/5dcserver.toml.example) for available options.
 
 On the client side:
 
