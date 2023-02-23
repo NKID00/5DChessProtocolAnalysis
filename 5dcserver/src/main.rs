@@ -1,12 +1,14 @@
 use anyhow::Result;
 use futures::future::join_all;
-use indoc::indoc;
-use std::collections::{HashSet, VecDeque};
+use futures::stream::FuturesUnordered;
+use futures::StreamExt;
+use serde::Deserialize;
+use std::collections::VecDeque;
 use std::env;
+use std::fs;
 use std::io::ErrorKind;
 use std::process::exit;
 use std::sync::Arc;
-use tokio::fs;
 use tokio::sync::watch;
 use tokio::{net::TcpListener, select};
 use tracing::{info, subscriber, Level};
@@ -16,12 +18,28 @@ use tracing_subscriber::FmtSubscriber;
 pub mod datatype;
 pub mod server;
 
-use datatype::*;
 use server::{handle_connection, ServerState};
 
 fn print_usage(arg0: &String) {
     println!();
     println!("usage: {} <CONFIG FILE>", arg0);
+}
+
+#[derive(Deserialize)]
+struct Config {
+    addr: Vec<String>,
+    port: u16,
+    trace: bool,
+
+    ban_public_match: bool,
+    ban_private_match: bool,
+    ban_reset_puzzle: bool,
+    ban_variant: Vec<i64>,
+
+    limit_concurrent_match: usize,
+    limit_public_waiting: usize,
+    limit_connection_duration: u64,
+    limit_message_length: usize,
 }
 
 fn get_config<'a, T: toml::macros::Deserialize<'a>>(
@@ -46,7 +64,7 @@ async fn main() -> Result<()> {
         env!("VERGEN_BUILD_SEMVER"),
         match option_env!("VERGEN_GIT_SHA_SHORT") {
             Some(s) => s,
-            None => "unknown rev"
+            None => "unknown rev",
         },
         env!("VERGEN_RUSTC_SEMVER")
     );
@@ -60,32 +78,18 @@ async fn main() -> Result<()> {
     }
 
     // load config
-    let config = match fs::read(&args[1]).await {
-        Ok(config) => toml::from_str(String::from_utf8(config)?.as_str())?,
+    let config: Config = match fs::read_to_string(&args[1]) {
+        Ok(config) => toml::from_str(config.as_str())?,
         Err(e) if e.kind() == ErrorKind::NotFound => {
-            let default_config = indoc! {"
-                addr = [\"0.0.0.0\", \"::\"]  # Bind address
-                port = 39005  # Bind port, official server uses 39005
-                trace = true  # Print detailed debug information
-                
-                ban_public_match = false  # Ban public matches (allow private matches only)
-                ban_private_match = false  # Ban private matches (allow public matches only)
-                ban_reset_puzzle = true  # Ban illegal game-resetting messages
-                ban_variant = []  # IDs of banned variants, see the variant list
-                
-                limit_concurrent_match = 2000  # maximum number of matches
-                limit_public_waiting = 100  # maximum number of public waiting matches
-                limit_connection_duration = 259200  # maximum duration of a client connection in seconds
-                limit_message_length = 4096  # maximum length of a network packet in bytes, must be >= 1008
-            "};
-            fs::write(&args[1], default_config).await?;
+            let default_config = include_str!("5dcserver.toml.example");
+            fs::write(&args[1], default_config)?;
             toml::from_str(default_config)?
         }
         Err(e) => Err(e)?,
     };
 
     // register tracing
-    let trace = get_config(&config, "trace", false);
+    let trace = config.trace;
     let sub = FmtSubscriber::builder()
         .with_max_level(if cfg!(debug_assertions) || trace {
             Level::TRACE
@@ -94,24 +98,6 @@ async fn main() -> Result<()> {
         })
         .finish();
     subscriber::set_global_default(sub)?;
-
-    // init server state
-    let allow_reset_puzzle = get_config(&config, "allow_reset_puzzle", false);
-    let variants = get_config(&config, "variants", toml::value::Array::new());
-    let variants = {
-        let mut variants_set = HashSet::new();
-        if variants.len() == 0 {
-            for i in 1..46 {
-                variants_set.insert(try_i64_to_enum(i)?);
-            }
-        } else {
-            for i in variants {
-                variants_set.insert(try_i64_to_enum(i.as_integer().unwrap())?);
-            }
-        }
-        variants_set
-    };
-    let state = Arc::new(ServerState::new(allow_reset_puzzle, variants));
 
     // handle ctrl-c
     let (running_tx, mut running_rx) = watch::channel(true);
@@ -128,17 +114,24 @@ async fn main() -> Result<()> {
     })?;
 
     // bind and listen for connections
-    let addr = get_config(&config, "addr", "0.0.0.0");
-    let port = get_config(&config, "port", 39005);
-    let bind_addr = (addr, port);
-    let listener = TcpListener::bind(bind_addr).await?;
-    info!("listening on {}:{} ...", bind_addr.0, bind_addr.1);
+    let listeners = Vec::new();
+    for addr in config.addr {
+        listeners.push(TcpListener::bind((addr, config.port)).await?);
+        info!("listening on {}:{} ...", addr, config.port);
+    }
+
+    // init server state
+    let state = Arc::new(ServerState::new(config));
 
     let mut handles = VecDeque::new();
     loop {
+        let futures: FuturesUnordered<_> = listeners
+            .into_iter()
+            .map(|listener| listener.accept())
+            .collect();
         select! {
-            result = listener.accept() => {
-                let (stream, addr) = result?;
+            result = futures.next() => {
+                let (stream, addr) = result.unwrap()?;
                 handles.push_back(tokio::spawn(handle_connection(state.clone(), stream, addr, running_rx.clone())));
             },
             result = running_rx.changed() => {

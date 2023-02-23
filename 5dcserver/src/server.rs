@@ -1,6 +1,7 @@
+use anyhow::{Error, Result};
 use indexmap::IndexMap;
 use std::collections::{HashMap, HashSet};
-use std::error::Error;
+use std::fmt::Display;
 use std::io::ErrorKind;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicI64, Ordering};
@@ -9,10 +10,22 @@ use std::time::Duration;
 use tokio::net::TcpStream;
 use tokio::select;
 use tokio::sync::{broadcast, watch, Mutex};
-use tokio::time::{Instant, sleep};
+use tokio::time::{sleep, Instant, Sleep};
 use tracing::{error, info, trace};
+use serde::Deserialize;
 
-use crate::datatype::*;
+use crate::{datatype::*, Config};
+
+#[derive(Debug, Deserialize)]
+pub struct ServerConfig {
+    pub allow_reset_puzzle: bool,
+    pub variants: HashSet<Variant>,
+    pub variants_without_random: Vec<Variant>,
+}
+
+impl ServerConfig {
+
+}
 
 #[derive(Debug)]
 pub struct ServerState {
@@ -20,14 +33,26 @@ pub struct ServerState {
     pub matches: Mutex<HashMap<Passcode, broadcast::Receiver<Message>>>,
     pub public_matches: Mutex<HashMap<Passcode, MatchSettingsWithoutVisibility>>,
     pub server_history_matches: Mutex<IndexMap<MatchId, ServerHistoryMatch>>,
-    pub instant_start: Instant,
-    pub allow_reset_puzzle: bool,
-    pub variants: HashSet<Variant>,
-    pub variants_without_random: Vec<Variant>,
+    pub start_timestamp: Instant,
+    pub config: ServerConfig,
 }
 
 impl ServerState {
-    pub fn new(allow_reset_puzzle: bool, variants: HashSet<Variant>) -> Self {
+    pub fn new(config: Config) -> Self {
+        let variants = get_config(&config, "variants", toml::value::Array::new());
+        let variants = {
+            let mut variants_set = HashSet::new();
+            if variants.len() == 0 {
+                for i in 1..46 {
+                    variants_set.insert(try_i64_to_enum(i)?);
+                }
+            } else {
+                for i in variants {
+                    variants_set.insert(try_i64_to_enum(i.as_integer().unwrap())?);
+                }
+            }
+            variants_set
+        };
         let mut variants_without_random = variants.clone();
         variants_without_random.remove(&Variant::Random);
         ServerState {
@@ -35,12 +60,26 @@ impl ServerState {
             matches: Mutex::new(HashMap::new()),
             public_matches: Mutex::new(HashMap::new()),
             server_history_matches: Mutex::new(IndexMap::new()),
-            instant_start: Instant::now(),
+            start_timestamp: Instant::now(),
             allow_reset_puzzle,
             variants,
-            variants_without_random: Vec::from_iter(variants_without_random)
+            variants_without_random: Vec::from_iter(variants_without_random),
         }
     }
+    // pub fn new(allow_reset_puzzle: bool, variants: HashSet<Variant>) -> Self {
+    //     let mut variants_without_random = variants.clone();
+    //     variants_without_random.remove(&Variant::Random);
+    //     ServerState {
+    //         match_id: AtomicI64::new(1),
+    //         matches: Mutex::new(HashMap::new()),
+    //         public_matches: Mutex::new(HashMap::new()),
+    //         server_history_matches: Mutex::new(IndexMap::new()),
+    //         start_timestamp: Instant::now(),
+    //         allow_reset_puzzle,
+    //         variants,
+    //         variants_without_random: Vec::from_iter(variants_without_random),
+    //     }
+    // }
 }
 
 /* state machine of one connection:
@@ -58,12 +97,13 @@ pub enum ConnectionStateEnum {
 pub struct ConnectionState {
     pub state: ConnectionStateEnum,
     pub ss: Arc<ServerState>,
-    pub addr: SocketAddr,  // client
-    pub io: MessageIO,  // client
-    pub tx: Option<broadcast::Sender<Message>>,  // peer
-    pub rx: Option<broadcast::Receiver<Message>>,  // peer
-    pub m: Option<MatchSettings>, // match is reserved as a key word
+    pub addr: SocketAddr,                         // client
+    pub io: MessageIO,                            // client
+    pub tx: Option<broadcast::Sender<Message>>,   // peer
+    pub rx: Option<broadcast::Receiver<Message>>, // peer
+    pub m: Option<MatchSettings>,                 // match is reserved as a key word
     pub running: watch::Receiver<bool>,
+    pub timeout: Sleep,
 }
 
 impl ConnectionState {
@@ -82,11 +122,15 @@ impl ConnectionState {
             rx: None,
             m: None,
             running,
+            timeout: sleep(ss.)
         }
     }
 }
 
-fn trace_error(cs: &mut ConnectionState, e: Box<dyn Error>) {
+fn trace_error<E>(cs: &mut ConnectionState, e: E)
+where
+    E: Display,
+{
     error!("[{}:{}] {}", cs.addr.ip(), cs.addr.port(), e);
 }
 
@@ -104,7 +148,7 @@ pub async fn handle_connection(
             Ok(e) if e.kind() == ErrorKind::ConnectionAborted => {}
             Ok(e) => trace_error(&mut cs, e),
             Err(e) => match e.downcast::<broadcast::error::RecvError>() {
-                Ok(e) if e.as_ref() == &broadcast::error::RecvError::Closed => {}
+                Ok(broadcast::error::RecvError::Closed) => {}
                 Ok(e) => trace_error(&mut cs, e),
                 Err(e) => trace_error(&mut cs, e),
             },
@@ -136,7 +180,7 @@ pub async fn handle_connection(
     info!("[{}:{}] Disconnected.", cs.addr.ip(), cs.addr.port());
 }
 
-async fn handle_connection_main_loop(cs: &mut ConnectionState) -> Result<(), Box<dyn Error>> {
+async fn handle_connection_main_loop(cs: &mut ConnectionState) -> Result<()> {
     loop {
         match cs.state {
             ConnectionStateEnum::Idle => select! {
@@ -171,7 +215,7 @@ async fn handle_connection_main_loop(cs: &mut ConnectionState) -> Result<(), Box
     Ok(())
 }
 
-fn peer_send(cs: &mut ConnectionState, msg: Message) -> Result<(), Box<dyn Error>> {
+fn peer_send(cs: &mut ConnectionState, msg: Message) -> Result<()> {
     trace!("Internal {:?}", msg);
     cs.tx.as_mut().unwrap().send(msg)?;
     Ok(())
@@ -180,7 +224,7 @@ fn peer_send(cs: &mut ConnectionState, msg: Message) -> Result<(), Box<dyn Error
 async fn handle_match_list_request(
     cs: &mut ConnectionState,
     m: Option<MatchSettings>,
-) -> Result<(), Box<dyn Error>> {
+) -> Result<()> {
     let mut public_matches_count = 0;
     let server_history_matches_count = cs.ss.server_history_matches.lock().await.len();
     let mut body = S2CMatchListNonhostBody {
@@ -244,10 +288,7 @@ async fn handle_match_list_request(
     Ok(())
 }
 
-async fn handle_connection_idle(
-    cs: &mut ConnectionState,
-    msg: Message,
-) -> Result<(), Box<dyn Error>> {
+async fn handle_connection_idle(cs: &mut ConnectionState, msg: Message) -> Result<()> {
     match msg {
         Message::C2SGreet(_body) => {
             cs.io.put(Message::S2CGreet).await?;
@@ -367,10 +408,7 @@ async fn handle_connection_idle(
     Ok(())
 }
 
-async fn handle_connection_waiting(
-    cs: &mut ConnectionState,
-    msg: Message,
-) -> Result<(), Box<dyn Error>> {
+async fn handle_connection_waiting(cs: &mut ConnectionState, msg: Message) -> Result<()> {
     match msg {
         Message::C2SMatchCancel => {
             let passcode = cs.m.unwrap().passcode;
@@ -391,7 +429,7 @@ async fn handle_connection_waiting(
             let mut body = S2CMatchStartBody {
                 m: cs.m.unwrap().into(),
                 match_id: cs.m.unwrap().match_id,
-                seconds_passed: Instant::now().duration_since(cs.ss.instant_start).as_secs(),
+                seconds_passed: Instant::now().duration_since(cs.ss.start_timestamp).as_secs(),
             };
             cs.state = ConnectionStateEnum::Playing;
             body.m.variant = body.m.variant.determined(&cs.ss.variants_without_random);
@@ -405,10 +443,7 @@ async fn handle_connection_waiting(
     Ok(())
 }
 
-async fn handle_connection_playing(
-    cs: &mut ConnectionState,
-    msg: Message,
-) -> Result<(), Box<dyn Error>> {
+async fn handle_connection_playing(cs: &mut ConnectionState, msg: Message) -> Result<()> {
     match msg {
         Message::C2SForfeit => {
             peer_send(cs, Message::InternalForfeit)?;
@@ -429,7 +464,7 @@ async fn handle_connection_playing(
             if (!cs.ss.allow_reset_puzzle) && body.action_type == ActionType::ResetPuzzle {
                 err_invalid_data!("Action of type {:?} is not allowed.", body.action_type)?;
             }
-            body.seconds_passed = Instant::now().duration_since(cs.ss.instant_start).as_secs();
+            body.seconds_passed = Instant::now().duration_since(cs.ss.start_timestamp).as_secs();
             peer_send(cs, Message::InternalAction(body))?;
             cs.io.put(Message::C2SOrS2CAction(body)).await?;
         }
