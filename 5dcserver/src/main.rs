@@ -121,7 +121,7 @@ async fn main() -> Result<()> {
     }
 
     // init server state
-    let state = Arc::new(ServerState::new(config));
+    let state = Arc::new(ServerState::new(config)?);
 
     let mut handles = VecDeque::new();
     loop {

@@ -24,21 +24,7 @@ pub struct ServerConfig {
 }
 
 impl ServerConfig {
-
-}
-
-#[derive(Debug)]
-pub struct ServerState {
-    pub match_id: AtomicI64,
-    pub matches: Mutex<HashMap<Passcode, broadcast::Receiver<Message>>>,
-    pub public_matches: Mutex<HashMap<Passcode, MatchSettingsWithoutVisibility>>,
-    pub server_history_matches: Mutex<IndexMap<MatchId, ServerHistoryMatch>>,
-    pub start_timestamp: Instant,
-    pub config: ServerConfig,
-}
-
-impl ServerState {
-    pub fn new(config: Config) -> Self {
+    fn new(config: Config) -> Result<Self> {
         let variants = get_config(&config, "variants", toml::value::Array::new());
         let variants = {
             let mut variants_set = HashSet::new();
@@ -55,16 +41,34 @@ impl ServerState {
         };
         let mut variants_without_random = variants.clone();
         variants_without_random.remove(&Variant::Random);
-        ServerState {
+        Ok(ServerConfig { 
+            allow_reset_puzzle,
+            variants,
+            variants_without_random: Vec::from_iter(variants_without_random),
+        })
+    }
+}
+
+#[derive(Debug)]
+pub struct ServerState {
+    pub match_id: AtomicI64,
+    pub matches: Mutex<HashMap<Passcode, broadcast::Receiver<Message>>>,
+    pub public_matches: Mutex<HashMap<Passcode, MatchSettingsWithoutVisibility>>,
+    pub server_history_matches: Mutex<IndexMap<MatchId, ServerHistoryMatch>>,
+    pub start_timestamp: Instant,
+    pub config: ServerConfig,
+}
+
+impl ServerState {
+    pub fn new(config: Config) -> Result<Self> {
+        Ok(ServerState {
             match_id: AtomicI64::new(1),
             matches: Mutex::new(HashMap::new()),
             public_matches: Mutex::new(HashMap::new()),
             server_history_matches: Mutex::new(IndexMap::new()),
             start_timestamp: Instant::now(),
-            allow_reset_puzzle,
-            variants,
-            variants_without_random: Vec::from_iter(variants_without_random),
-        }
+            config: ServerConfig::new(config)?
+        })
     }
     // pub fn new(allow_reset_puzzle: bool, variants: HashSet<Variant>) -> Self {
     //     let mut variants_without_random = variants.clone();
