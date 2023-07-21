@@ -2,27 +2,29 @@
 
 An **Unofficial** Online Match Server of [5D Chess With Multiverse Time Travel](https://store.steampowered.com/app/1349230/5D_Chess_With_Multiverse_Time_Travel/).
 
-**Highlights**
+Highlights:
+
 - Written in Rust
 - Asynchronous network and inter-thread communication
 - Configurable variant ban
 - Defense against hackers that may reset your game
 
-**Supports all game features including**
+Supports all game features including:
+
 - Query public match list and server match history
 - Create, join and play public and private matches
 - All variants and random variant
 - Clock
 
-Try it out:
+## Try it out
 
-```
+```sh
 ./5dchesswithmultiversetimetravel --server-hostname 5d.nkid00.name
 ```
 
-For users in China mainland:
+For Chinese mainland:
 
-```
+```sh
 ./5dchesswithmultiversetimetravel --server-hostname 5dc.nkid00.name
 ```
 
@@ -30,17 +32,23 @@ For users in China mainland:
 
 ## Usage
 
-On the server side:
+Server side:
 
+```sh
+docker run -p 39005:39005 docker.io/nkid00/5dcserver:latest
 ```
+
+or
+
+```sh
 ./5dcserver <CONFIG FILE>
 ```
 
 See the [default configuration file](./5dcserver.toml) for available options.
 
-On the client side:
+Client side:
 
-```
+```sh
 ./5dchesswithmultiversetimetravel --server-hostname <HOSTNAME> [--server-port <PORT>]
 ```
 
@@ -48,11 +56,15 @@ The default port is 39005.
 
 ## Build
 
-Building requires the latest Rust toolchain.
+Build with docker:
 
 ```sh
-cd 5dcserver
+docker bulid .
+```
 
+Build with the latest Rust toolchain:
+
+```sh
 # Debug build
 cargo build
 
@@ -60,11 +72,11 @@ cargo build
 cargo build -r
 ```
 
-Binaries are located in `5dcserver/target/debug/` or `5dcserver/target/release/`.
+Binaries are located in `target/debug/` or `target/release/`.
 
 ## License
 
-Copyright (C) 2022 NKID00
+Copyright (C) 2022-2023 NKID00
 
 This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General Public License as published by the Free Software Foundation, version 3.
 
