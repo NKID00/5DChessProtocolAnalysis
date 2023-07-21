@@ -25,7 +25,7 @@ fn print_usage(arg0: &String) {
     println!("usage: {} <CONFIG FILE>", arg0);
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 struct Config {
     addr: Vec<String>,
     port: u16,
@@ -121,7 +121,7 @@ async fn main() -> Result<()> {
     }
 
     // init server state
-    let state = Arc::new(ServerState::new(config)?);
+    let state = Arc::new(ServerState::new(config, running_rx.clone())?);
 
     let mut handles = VecDeque::new();
     loop {
@@ -132,7 +132,7 @@ async fn main() -> Result<()> {
         select! {
             result = futures.next() => {
                 let (stream, addr) = result.unwrap()?;
-                handles.push_back(tokio::spawn(handle_connection(state.clone(), stream, addr, running_rx.clone())));
+                handles.push_back(tokio::spawn(handle_connection(state.clone(), stream, addr)));
             },
             result = running_rx.changed() => {
                 join_all(handles).await;

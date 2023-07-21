@@ -7,7 +7,7 @@ ban_private_match = false  # Ban private matches (allow public matches only)
 ban_reset_puzzle = true  # Ban illegal game-resetting messages
 ban_variant = []  # IDs of banned variants, see the variant list
 
-limit_concurrent_match = 2000  # maximum number of matches
-limit_public_waiting = 100  # maximum number of public waiting matches
-limit_connection_duration = 259200  # maximum duration of a client connection in seconds
+limit_concurrent_match = 200  # maximum number of matches
+limit_public_waiting = 20  # maximum number of public waiting matches
+limit_connection_duration = 86400  # maximum duration of a client connection in seconds
 limit_message_length = 4096  # maximum length of a network packet in bytes, must be >= 1008

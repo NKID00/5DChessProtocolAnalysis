@@ -6,12 +6,10 @@ use rand::Rng;
 use std::collections::HashMap;
 use std::io::{Error, Result};
 use tokio::net::TcpStream;
-use tokio::sync::{broadcast, Mutex};
+use tokio::sync::{broadcast, Mutex, RwLock};
 use tokio::time::Instant;
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
 use tracing::trace;
-
-pub const MESSAGE_LENGTH_MAX: usize = 4096; // >= 1008, prevent attacks
 
 pub type Passcode = i64;
 pub type MatchId = i64;
@@ -656,12 +654,12 @@ pub struct MessageIO {
 }
 
 impl MessageIO {
-    pub fn new(stream: TcpStream) -> Self {
+    pub fn new(stream: TcpStream, limit_message_length: usize) -> Self {
         MessageIO {
             framed: LengthDelimitedCodec::builder()
                 .little_endian()
                 .length_field_type::<u64>()
-                .max_frame_length(MESSAGE_LENGTH_MAX)
+                .max_frame_length(limit_message_length)
                 .new_framed(stream),
         }
     }
@@ -733,9 +731,9 @@ pub fn generate_random_passcode_internal() -> Passcode {
 }
 
 pub async fn generate_random_passcode_internal_with_exceptions(
-    exceptions: &Mutex<HashMap<Passcode, broadcast::Receiver<Message>>>,
+    exceptions: &RwLock<HashMap<Passcode, broadcast::Receiver<Message>>>,
 ) -> Passcode {
-    let exceptions = exceptions.lock().await;
+    let exceptions = exceptions.read().await;
     loop {
         let passcode = generate_random_passcode_internal();
         if !exceptions.contains_key(&passcode) {
