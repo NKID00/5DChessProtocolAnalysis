@@ -1,5 +1,5 @@
 addr = "0.0.0.0"  # Bind address
 allow_reset_puzzle = false  # Allow illegal game-resetting messages
 port = 39005  # Bind port
-trace = true  # Print detailed debug information
+trace = false  # Print detailed debug information
 variants = []  # IDs of allowed variants (see the variant list), "[]" means no limit
