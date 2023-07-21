@@ -3,60 +3,66 @@
 An **Unofficial** Online Match Server of [5D Chess With Multiverse Time Travel](https://store.steampowered.com/app/1349230/5D_Chess_With_Multiverse_Time_Travel/).
 
 **Highlights**
-
 - Written in Rust
-
 - Asynchronous network and inter-thread communication
+- Configurable variant ban
+- Defense against hackers that may reset your game
 
-- Ban illegal messages sent by hackers that would cause game to reset
-
-- Limit matches to only certain variants
-
-**Support all game features including**
-
+**Supports all game features including**
 - Query public match list and server match history
-
 - Create, join and play public and private matches
-
 - All variants and random variant
-
 - Clock
+
+Try it out:
+
+```
+./5dchesswithmultiversetimetravel --server-hostname 5d.nkid00.name
+```
+
+For users in China mainland:
+
+```
+./5dchesswithmultiversetimetravel --server-hostname 5dc.nkid00.name
+```
+
+(you'll probably have the very same experience as the official server, sadly)
 
 ## Usage
 
+On the server side:
+
 ```
-usage: 5dcserver <CONFIG FILE>
+./5dcserver <CONFIG FILE>
 ```
 
-## Config
+See the [default configuration file](./5dcserver.toml) for available options.
 
-```toml
-addr = "0.0.0.0"  # Bind address
-allow_reset_puzzle = false  # Allow illegal game-resetting messages
-port = 39005  # Bind port
-trace = false  # Print detailed debug information
-variants = []  # Limit matches to only certain variants, "[]" means no limit
+On the client side:
+
 ```
+./5dchesswithmultiversetimetravel --server-hostname <HOSTNAME> [--server-port <PORT>]
+```
+
+The default port is 39005.
 
 ## Build
 
-Requires the latest Rust toolchain.
+Building requires the latest Rust toolchain.
 
 ```sh
 cd 5dcserver
 
 # Debug build
 cargo build
-cargo run
 
 # Release build
 cargo build -r
-cargo run -r
 ```
 
 Binaries are located in `5dcserver/target/debug/` or `5dcserver/target/release/`.
 
-## Copyright
+## License
 
 Copyright (C) 2022 NKID00
 
