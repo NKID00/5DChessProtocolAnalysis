@@ -24,7 +24,7 @@ fn print_usage(arg0: &String) {
 }
 
 fn get_config<'a, T: toml::macros::Deserialize<'a>>(
-    config: &toml::value::Map<String, toml::Value>,
+    config: &toml::value::Table,
     name: &str,
     default: T,
 ) -> T {
@@ -42,8 +42,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // banner
     println!(
         "5dcserver {} ({}) [rustc {}]",
-        env!("VERGEN_BUILD_SEMVER"),
-        env!("VERGEN_GIT_SHA_SHORT"),
+        env!("CARGO_PKG_VERSION"),
+        env!("VERGEN_GIT_SHA"),
         env!("VERGEN_RUSTC_SEMVER")
     );
     println!("Copyright (C) 2022 NKID00, licensed under AGPL-3.0-only");

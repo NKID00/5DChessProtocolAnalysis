@@ -17,12 +17,12 @@ tracing = "^0.1.35"
 tracing-subscriber = "^0.3.11"
 byteorder = "^1.4.3"
 rand = "^0.8.5"
-indexmap = "^1.9.1"
+indexmap = "^2.0.0"
 ctrlc = "^3.2.2"
-toml = "^0.5.9"
+toml = "^0.7.6"
 
 [build-dependencies]
-vergen = "^7.2.1"
+vergen = { version = "^8.2.4", features = ["build", "git", "gitoxide", "rustc"] }
 
 [[bin]]
 name = "5dcserver"
