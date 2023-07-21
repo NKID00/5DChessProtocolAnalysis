@@ -1,22 +1,22 @@
 use futures::future::join_all;
 use std::collections::{HashSet, VecDeque};
-use std::env;
 use std::error::Error;
 use std::io::ErrorKind;
 use std::process::exit;
 use std::sync::Arc;
-use tokio::fs;
+use std::{env, fs};
 use tokio::sync::watch;
 use tokio::{net::TcpListener, select};
 use tracing::{info, subscriber, Level};
+use tracing_subscriber::fmt::time::{OffsetTime, UtcTime};
 use tracing_subscriber::FmtSubscriber;
 
 #[macro_use]
 pub mod datatype;
 pub mod server;
 
-use server::{handle_connection, ServerState};
 use datatype::*;
+use server::{handle_connection, ServerState};
 
 fn print_usage(arg0: &String) {
     println!();
@@ -38,53 +38,7 @@ fn get_config<'a, T: toml::macros::Deserialize<'a>>(
 }
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn Error>> {
-    // banner
-    println!(
-        "5dcserver {} ({}) [rustc {}]",
-        env!("CARGO_PKG_VERSION"),
-        env!("VERGEN_GIT_SHA"),
-        env!("VERGEN_RUSTC_SEMVER")
-    );
-    println!("Copyright (C) 2022 NKID00, licensed under AGPL-3.0-only");
-
-    // parse args
-    let args: Vec<String> = env::args().collect();
-    if args.len() <= 1 {
-        print_usage(&args[0]);
-        exit(1);
-    }
-
-    // load config
-    let config = match fs::read(&args[1]).await {
-        Ok(config) => toml::from_str(String::from_utf8(config)?.as_str())?,
-        Err(e) if e.kind() == ErrorKind::NotFound => {
-            let config = toml::toml! {
-                addr = "0.0.0.0"
-                allow_reset_puzzle = false
-                port = 39005
-                trace = false
-                variants = []
-            };
-            fs::write(&args[1], config.to_string()).await?;
-            config
-        }
-        Err(e) => Err(e)?,
-    }
-    .try_into()
-    .unwrap();
-
-    // register tracing
-    let trace = get_config(&config, "trace", false);
-    let sub = FmtSubscriber::builder()
-        .with_max_level(if cfg!(debug_assertions) || trace {
-            Level::TRACE
-        } else {
-            Level::INFO
-        })
-        .finish();
-    subscriber::set_global_default(sub)?;
-
+async fn async_main(config: toml::Table) -> Result<(), Box<dyn Error>> {
     // init server state
     let allow_reset_puzzle = get_config(&config, "allow_reset_puzzle", false);
     let variants = get_config(&config, "variants", toml::value::Array::new());
@@ -138,4 +92,51 @@ async fn main() -> Result<(), Box<dyn Error>> {
             }
         }
     }
+}
+
+fn main() -> Result<(), Box<dyn Error>> {
+    // banner
+    println!("5dcserver {}", env!("CARGO_PKG_VERSION"));
+    println!("Copyright (C) 2022 NKID00, licensed under AGPL-3.0-only");
+
+    // parse args
+    let args: Vec<String> = env::args().collect();
+    if args.len() <= 1 {
+        print_usage(&args[0]);
+        exit(1);
+    }
+
+    // load config
+    let config = match fs::read(&args[1]) {
+        Ok(config) => toml::from_str(String::from_utf8(config)?.as_str())?,
+        Err(e) if e.kind() == ErrorKind::NotFound => {
+            let config = toml::toml! {
+                addr = "0.0.0.0"
+                allow_reset_puzzle = false
+                port = 39005
+                trace = false
+                variants = []
+            };
+            fs::write(&args[1], config.to_string())?;
+            config
+        }
+        Err(e) => Err(e)?,
+    }
+    .try_into()
+    .unwrap();
+
+    // register tracing
+    let trace = get_config(&config, "trace", false);
+    let sub = FmtSubscriber::builder()
+        .with_max_level(if cfg!(debug_assertions) || trace {
+            Level::TRACE
+        } else {
+            Level::INFO
+        });
+    match OffsetTime::local_rfc_3339() {
+        Ok(timer) => subscriber::set_global_default(sub.with_timer(timer).finish()),
+        Err(_) => subscriber::set_global_default(sub.with_timer(UtcTime::rfc_3339()).finish()),
+    }?;
+
+    async_main(config)
 }
